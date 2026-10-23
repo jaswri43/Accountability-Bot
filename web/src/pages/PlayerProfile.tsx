@@ -79,10 +79,10 @@ function OverviewSection({ profile }: { profile: Profile }) {
  * moving between profiles starts fresh instead of showing the previous one. */
 export function PlayerProfile() {
   const { discordId } = useParams();
-  return <ProfileBody key={discordId} discordId={Number(discordId)} />;
+  return <ProfileBody key={discordId} discordId={discordId ?? ""} />;
 }
 
-function ProfileBody({ discordId }: { discordId: number }) {
+function ProfileBody({ discordId }: { discordId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseTab(searchParams.get("tab"));
 

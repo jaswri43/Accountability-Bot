@@ -59,7 +59,7 @@ def app_client(test_db):
 def player_ids(client, viewer=VIEWER) -> set[int]:
     response = client.get("/players", headers=headers(viewer))
     assert response.status_code == 200
-    return {p["discord_id"] for p in response.json()}
+    return {int(p["discord_id"]) for p in response.json()}
 
 
 # --- Visibility ----------------------------------------------------------------
@@ -68,7 +68,7 @@ def player_ids(client, viewer=VIEWER) -> set[int]:
 def test_list_has_visible_users_including_requester_but_not_hidden(app_client):
     assert player_ids(app_client) == {VIEWER, PUBLIC}
     [me] = [p for p in app_client.get("/players", headers=headers(VIEWER)).json() if p["is_you"]]
-    assert me["discord_id"] == VIEWER
+    assert me["discord_id"] == str(VIEWER)
 
 
 def test_hidden_and_nonexistent_profiles_are_identical_404s(app_client):
@@ -97,6 +97,23 @@ def test_hiding_via_api_removes_profile_and_showing_restores_it(app_client):
 def test_requires_authentication(app_client):
     assert app_client.get("/players").status_code == 401
     assert app_client.get(f"/players/{PUBLIC}").status_code == 401
+
+
+def test_ids_are_strings_that_survive_javascript(app_client):
+    # Real Discord ids exceed 2^53, so a JSON number gets rounded by the
+    # browser's JSON.parse and the dashboard then requests the wrong player
+    # (this 404'd a real user's own card). This one rounds as a double.
+    snowflake = 261228340123455201
+    assert float(snowflake) != snowflake
+    asyncio.run(add_rows(make_user(discord_id=snowflake, riot_puuid="puuid-snowflake")))
+
+    cards = app_client.get("/players", headers=headers(VIEWER)).json()
+    [card] = [p for p in cards if p["discord_id"] == str(snowflake)]
+    profile = app_client.get(f"/players/{card['discord_id']}", headers=headers(VIEWER))
+    assert profile.status_code == 200
+    assert profile.json()["discord_id"] == str(snowflake)
+    assert profile.json()["is_you"] is False
+    assert app_client.get(f"/players/{snowflake}", headers=headers(snowflake)).json()["is_you"] is True
 
 
 # --- What a profile contains -----------------------------------------------------

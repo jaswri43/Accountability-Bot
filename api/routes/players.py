@@ -70,7 +70,7 @@ async def list_players(user: CurrentUser = Depends(get_current_user)):
                 league_rank = rank.formatted if rank else None
             summaries.append(
                 PlayerSummaryOut(
-                    discord_id=player.discord_id,
+                    discord_id=str(player.discord_id),
                     discord_username=player.discord_username,
                     is_you=player.discord_id == user.discord_id,
                     games=_games(player),
@@ -121,7 +121,7 @@ async def get_player(discord_id: int, user: CurrentUser = Depends(get_current_us
         ]
 
         return PlayerProfileOut(
-            discord_id=player.discord_id,
+            discord_id=str(player.discord_id),
             discord_username=player.discord_username,
             is_you=player.discord_id == user.discord_id,
             league=league,

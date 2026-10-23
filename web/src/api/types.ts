@@ -51,6 +51,8 @@ export interface StatusResponse {
 }
 
 export interface Me {
+  // Rounded by JSON.parse (Discord ids exceed 2^53) -- display only, never
+  // send it back to the API. Player ids are strings for this reason.
   discord_id: number;
   discord_username: string;
   riot_game_name: string | null;
@@ -175,7 +177,8 @@ export interface DeadlockMatch {
 // account id, raw pity, task ids, task templates, or completed-task history.
 
 export interface PlayerSummary {
-  discord_id: number;
+  // A string: Discord ids are too large for a JS number (it would round them).
+  discord_id: string;
   // Null until the bot has seen this user's Discord name.
   discord_username: string | null;
   is_you: boolean;
@@ -221,7 +224,7 @@ export interface PlayerDeadlock extends DeadlockStats {
 }
 
 export interface PlayerProfile {
-  discord_id: number;
+  discord_id: string;
   discord_username: string | null;
   is_you: boolean;
   league: PlayerLeague | null;

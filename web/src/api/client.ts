@@ -81,5 +81,5 @@ export const api = {
   setProfileHidden: (hidden: boolean) =>
     apiFetch<{ hidden: boolean }>("/profile-visibility", { method: "PUT", body: JSON.stringify({ hidden }) }),
   players: () => apiFetch<PlayerSummary[]>("/players"),
-  player: (discordId: number) => apiFetch<PlayerProfile>(`/players/${discordId}`),
+  player: (discordId: string) => apiFetch<PlayerProfile>(`/players/${discordId}`),
 };

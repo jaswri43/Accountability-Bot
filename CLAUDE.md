@@ -196,3 +196,4 @@ SSH details are in the user's memory, not in this repo. The repo lives at `~/lol
 **Frontend.**
 - The palette is "Charcoal & Dusty Blue": Tailwind v4 `@theme` tokens in `web/src/index.css` (`--color-hero` #18181b, `--color-accent` #5b7fa6, `--color-page` #fafaf9, warm `--color-tier-{low,medium,high}*`). Use the tokens, not raw hex. In match feeds a win is dusty blue and a loss is charcoal.
 - The frontend always calls relative `/api/...` paths, which keeps the session cookie same-origin in both dev and prod.
+- Discord IDs exceed JavaScript's 2^53 safe-integer limit, so `JSON.parse` silently rounds them. Any ID the browser sends back to the API must be serialized as a string, as `Player*Out.discord_id` is. `MeOut.discord_id` is still a number and is display-only.

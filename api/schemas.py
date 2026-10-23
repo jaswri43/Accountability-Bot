@@ -211,7 +211,10 @@ class ProfileVisibilityOut(BaseModel):
 
 
 class PlayerSummaryOut(BaseModel):
-    discord_id: int
+    # A string, not an int: Discord ids exceed JavaScript's 2^53 safe-integer
+    # limit, so the browser would silently round a numeric one (and then
+    # request the wrong player).
+    discord_id: str
     # Null until the bot has seen this user's Discord name (see bot/profiles.py).
     discord_username: str | None
     is_you: bool
@@ -261,7 +264,10 @@ class PlayerDeadlockOut(BaseModel):
 
 
 class PlayerProfileOut(BaseModel):
-    discord_id: int
+    # A string, not an int: Discord ids exceed JavaScript's 2^53 safe-integer
+    # limit, so the browser would silently round a numeric one (and then
+    # request the wrong player).
+    discord_id: str
     discord_username: str | None
     is_you: bool
     league: PlayerLeagueOut | None
