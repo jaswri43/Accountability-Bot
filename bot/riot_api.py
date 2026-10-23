@@ -117,3 +117,9 @@ def is_remake(match_details: dict, puuid: str) -> bool:
     participant -- Riot voids these (no LP change, no meaningful stats), so
     callers should exclude them from anything LP/pity-driven."""
     return get_participant(match_details, puuid).get("gameEndedInEarlySurrender", False)
+
+
+def is_counted_ranked(match_details: dict, puuid: str) -> bool:
+    """True for a Ranked Solo/Flex match that wasn't a remake -- the only
+    League matches that get a task, move pity, or count toward W/L."""
+    return match_details["info"]["queueId"] in RANKED_QUEUE_IDS and not is_remake(match_details, puuid)

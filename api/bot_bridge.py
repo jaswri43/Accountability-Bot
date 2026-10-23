@@ -16,6 +16,7 @@ _BOT_DIR = Path(__file__).resolve().parent.parent / "bot"
 if str(_BOT_DIR) not in sys.path:
     sys.path.insert(0, str(_BOT_DIR))
 
+from cosmetic import number_items, sort_by_tier_then_date
 from db import (
     GAME_DEADLOCK,
     GAME_LEAGUE,
@@ -28,28 +29,19 @@ from db import (
     complete_task,
     init_db,
 )
-from severity import (
-    PITY_MODES,
-    active_meters,
-    compute_odds,
-    get_pity,
-    has_opted_into_severity,
-    set_pity_mode,
-)
 from deadlock_api import RANKED_MATCH_MODE, badge_image_url, format_badge
-from accountability import DEFAULT_TASK_DESCRIPTION
-from cosmetic import number_items, resolve_cosmetic_number, sort_by_tier_then_date
-from ranked import format_rank, format_tier_rank
+from ranked import format_rank
 from riot_api import QUEUE_ID_LABELS, RANKED_FLEX_QUEUE_ID, RANKED_QUEUE_IDS, RANKED_SOLO_QUEUE_ID
+from severity import active_meters, compute_odds, get_pity, has_opted_into_severity, set_pity_mode
 from stats import (
     current_streak,
-    loss_streak_length,
     sort_matches_recent_first,
     task_completion_rate,
     tasks_completed_by_day,
     tier_breakdown,
     win_loss_record,
 )
+from task_lists import active_templates
 
 __all__ = [
     "GAME_DEADLOCK",
@@ -62,7 +54,6 @@ __all__ = [
     "async_session",
     "complete_task",
     "init_db",
-    "PITY_MODES",
     "active_meters",
     "compute_odds",
     "get_pity",
@@ -71,18 +62,15 @@ __all__ = [
     "RANKED_MATCH_MODE",
     "badge_image_url",
     "format_badge",
-    "DEFAULT_TASK_DESCRIPTION",
     "number_items",
-    "resolve_cosmetic_number",
     "sort_by_tier_then_date",
+    "active_templates",
     "format_rank",
-    "format_tier_rank",
     "QUEUE_ID_LABELS",
     "RANKED_FLEX_QUEUE_ID",
     "RANKED_QUEUE_IDS",
     "RANKED_SOLO_QUEUE_ID",
     "current_streak",
-    "loss_streak_length",
     "sort_matches_recent_first",
     "task_completion_rate",
     "tasks_completed_by_day",

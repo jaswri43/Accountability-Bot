@@ -1,0 +1,197 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Overview
+
+A Discord bot that watches ranked League of Legends losses (Riot API) and ranked Deadlock losses (community deadlock-api.com, unofficial) and assigns accountability tasks after each loss. It has three parts, all reading and writing one SQLite file, `bot.db`:
+
+- `bot/`: discord.py bot. Holds the slash commands, the polling loops, and all domain logic.
+- `api/`: FastAPI backend for the dashboard. Login is Discord OAuth2, and the session is a JWT in an httpOnly cookie. It reuses bot code **only through `api/bot_bridge.py`**. That file puts `bot/` on `sys.path` and re-exports what the API needs. `bot/` modules use bare imports (`from db import ...`), so don't import them directly from `api/`.
+- `web/`: React 19 + Vite + Tailwind v4 + Recharts.
+
+Production runs on an Oracle Cloud VM. Bot and API are systemd services, and nginx serves `web/dist`, proxies `/api/` to the API on localhost:8001, and handles TLS via certbot. The site is at https://lol-accountability.duckdns.org/.
+
+`README.md` is the long-form design log: one "Phase N" section per feature, plus the full first-time deploy runbook. Check the relevant phase notes before reworking a feature.
+
+## File map
+
+| Concern | Location |
+|---|---|
+| Bot entry point: logging, adds the cogs (`setup_hook`), syncs commands, starts the loops, persistent-view registration | `bot/main.py` |
+| Slash commands, one cog per area: `/ping` `/help` | `bot/cogs/general.py` |
+| `/register`, `/register-deadlock`, `/pitymode`, `/mute`, `/unmute` | `bot/cogs/accounts.py` |
+| `/done`, `/addtask`, `/mytasks`, `/removetask`, `/status`, `/stats` | `bot/cogs/tasks.py` |
+| Cog registry (`ALL_COGS`) and cog-shared bits (`odds_text`, `REGISTER_FIRST`) | `bot/cogs/__init__.py`, `bot/cogs/common.py` |
+| League polling loop (5 min), rank tracking | `bot/polling.py` |
+| Loss/win handling shared by both games: `create_task_for_loss`, `build_loss_embed`, `record_counted_win`, `ranked_loss_streak` | `bot/loss_flow.py` |
+| Pending-task reminder loop (3 h) | `bot/reminders.py` |
+| The numbered lists in display order: `pending_tasks`, `active_templates` | `bot/task_lists.py` |
+| Deadlock polling loop (15 min), `process_deadlock_history` | `bot/deadlock_polling.py` |
+| Pity meters, odds, tier draw, pity-mode switching | `bot/severity.py` |
+| Picking a task from the user's templates (`pick_task_for_user`, `DEFAULT_TASK_DESCRIPTION`) | `bot/accountability.py` |
+| SQLAlchemy models, `init_db()`, migrations, `complete_task()`, `as_utc()` | `bot/db.py` |
+| Persistent "Mark Done" button (`TaskCompletionView`) | `bot/views.py` |
+| Riot client (americas/na1 routing, `is_counted_ranked`, `is_remake`, `did_player_lose`, queue IDs) | `bot/riot_api.py` |
+| Deadlock client (429 backoff, `is_ranked`, `is_counted`, `did_player_win`, badges) | `bot/deadlock_api.py` |
+| Steam input parsing for `/register-deadlock` | `bot/steam_ids.py` |
+| Last-10-ranked-games history backfill (`backfill_user`, `store_games`) | `bot/backfill.py` |
+| Rank compare/format, LP delta, promotion/demotion | `bot/ranked.py` |
+| Pure stats: streaks, W/L, completion rate, tier breakdown, activity | `bot/stats.py` |
+| Display numbering and tier/date sorting | `bot/cosmetic.py` |
+| Loss-message wording and embed colors (severity tier if opted in, else losing streak) | `bot/tone.py` |
+| API app, CORS, lifespan (`init_db`) | `api/main.py` |
+| `/auth/login`, `/auth/callback`, `/auth/logout`, `get_current_user` | `api/auth.py` |
+| Combined data router (`from routes import router`) | `api/routes/__init__.py` |
+| `/tasks`, `/tasks/{id}/complete`, `/task-templates` | `api/routes/tasks.py` |
+| `/status`, `/pity-mode`, `/me`, `/pity-history` | `api/routes/account.py` |
+| `/stats/overview`, `/matches` (League) | `api/routes/league.py` |
+| `/deadlock/overview`, `/deadlock/matches` | `api/routes/deadlock.py` |
+| Match-feed helpers shared by league/deadlock routes | `api/routes/common.py` |
+| The only place `api/` imports bot code | `api/bot_bridge.py` |
+| Pydantic models | `api/schemas.py`, mirrored by hand in `web/src/api/types.ts` |
+| Fetch wrapper and endpoint calls | `web/src/api/client.ts` |
+| Auth gate (`GET /me` on mount) | `web/src/context/AuthContext.tsx` |
+| Routes: `/` Dashboard, `/history`, `/templates` | `web/src/App.tsx` |
+| Dashboard tabs (kept in `?tab=`) | `web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/{OverviewTab,LeagueTab,DeadlockTab}.tsx` |
+| History and task-template pages | `web/src/pages/History.tsx`, `web/src/pages/Templates.tsx` |
+| Tier labels/colors and UTC-safe date formatting; game labels | `web/src/lib/tier.ts`, `web/src/lib/game.ts` |
+| 60 s refresh while the tab is visible | `web/src/lib/useAutoRefresh.ts` |
+
+## Shared functions: reuse, never duplicate
+
+Bot commands and API routes must call the same functions, so behavior stays identical in Discord and on the dashboard. In `api/`, import all of these from `bot_bridge`.
+
+- **Task completion:** `complete_task(session, task)` in `bot/db.py`. Used by `/done`, the Mark Done button, and `POST /tasks/{id}/complete`.
+- **Odds:** `compute_odds(pity)` in `bot/severity.py`. Read a meter with `get_pity(user, meter)` and list the active meters with `active_meters(user)`.
+- **Pity-mode switching:** `set_pity_mode(session, user, mode)` in `bot/severity.py`. It's the only entry point; `/pitymode` and `PUT /pity-mode` both call it. `switch_pity_mode` is its pure inner step and should not be called directly.
+- **Loss pity and win pity:** `apply_loss_pity` / `apply_win_pity` in `bot/severity.py`. Use `pity_meter_for(user, game)` to pick the meter.
+- **Severity opt-in check:** `has_opted_into_severity` in `bot/severity.py`.
+- **Task creation for a loss (both games):** `create_task_for_loss` and `build_loss_embed` in `bot/loss_flow.py`. For wins use `record_counted_win`, and for the losing streak use `ranked_loss_streak(session, discord_id, game)`, both in the same module.
+- **Numbered lists:** `pending_tasks` and `active_templates` in `bot/task_lists.py`. Anything that shows or resolves a task or template `#N` must use these, so the numbers agree everywhere. (`/done` keeps its own date-ordered query only to find the most recent task.)
+- **Display numbering:** `number_items`, `resolve_cosmetic_number`, and `sort_by_tier_then_date` in `bot/cosmetic.py`. User-facing `#N` numbers are positions in a list, never DB IDs.
+- **Naive vs aware datetimes:** `as_utc` in `bot/db.py`.
+- **Stats:** the functions in `bot/stats.py` (`current_streak`, `win_loss_record`, `task_completion_rate`, `tier_breakdown`, `tasks_completed_by_day`, ...).
+
+## Domain rules
+
+- **Ranked only.** For League that means queue IDs 420 (solo) and 440 (flex), i.e. `RANKED_QUEUE_IDS`. For Deadlock it means `is_ranked`, with placements included. Anything else gets a placeholder `processed_matches` row (`queue_id` NULL) so it isn't checked again.
+- **Exclusions.** League remakes (`is_remake`; `riot_api.is_counted_ranked` combines this with the ranked-queue check) and abandoned, penalized, or unscored Deadlock matches (`not is_counted`) are skipped entirely: no task, no pity change, no rank refresh. They are stored as placeholder rows, so they also stay out of W/L and streaks.
+- **Pity constants** (`bot/severity.py`):
+  - Odds interpolate linearly from `DEFAULT_ODDS` (low/med/high 0.6/0.3/0.1) at pity 0 to `MAX_ODDS` (0.2/0.4/0.4) at `PITY_CAP = 60`.
+  - A counted loss draws a tier from the *pre-loss* pity, then adds `LOSS_STEP = 8`.
+  - **Soft reset:** after a High draw, pity is multiplied by `RETAIN_FACTOR = 0.6`.
+  - A counted win subtracts `WIN_STEP = 7.2`, with a floor of 0.
+- **Opt-in.** Severity has no on/off toggle. A user is opted in once they have an active Medium/High task template (set with `/addtask`). Until then pity stays at 0 and tasks are drawn plainly at random.
+- **Pity modes.**
+  - `shared` is the default: one meter, `users.pity`, fed by both games.
+  - `separate` uses `pity_league` / `pity_deadlock`.
+  - Switching shared → separate seeds both per-game meters with the shared value.
+  - Switching separate → shared takes the **max** of the two, so a mode switch can never lower pity.
+  - Every switch logs `pity_history` rows.
+- **Backfilled matches** (`processed_matches.backfilled = 1`, from `bot/backfill.py`) count toward the dashboard's W/L record and streak. They **never** affect pity or `pity_history`, never create tasks, and never post to Discord. Backfill only claims matches that started before the account's link time (`registered_at` / `deadlock_linked_at`); anything newer belongs to polling. `/register` commits the account and its backfilled rows in one transaction.
+- **Deadlock cutoff.** Polling only processes matches that started after `deadlock_linked_at`.
+- **Mute.** `/mute` stops both games' polling and the reminders for that user.
+- **Privacy.**
+  - Every API route is scoped to the caller via `get_current_user`, and nothing currently exposes another user's data.
+  - Any future cross-user feature (profiles, leaderboards) must never expose a user's Steam/Deadlock account ID or raw pity value.
+  - At most it may show derived, non-identifying data, such as a rank or a persona name.
+- **Ownership.** `processed_matches` has the primary key `(game, match_id, discord_id)`, so League and Deadlock IDs can never collide. `tasks.game` records which game triggered a task, and `pity_history.meter` records which meter a point belongs to.
+
+## Commands
+
+Run all Python from the **repo root**. The DB URL is the relative `sqlite+aiosqlite:///bot.db`, so the cwd decides which DB you touch. On this Windows dev PC, use `venv\Scripts\python`.
+
+```bash
+pip install -r requirements-dev.txt   # runtime deps + pytest, pytest-asyncio, ruff
+python bot/main.py                 # bot
+python api/main.py                 # API on :8001 (GET /health -> {"status": "ok"})
+
+cd web && npm install
+npm run dev                        # :5173, proxies /api/* -> localhost:8001 (prefix stripped)
+npm run lint                       # oxlint
+npm run build                      # tsc -b && vite build -> web/dist
+
+# These write to the real bot.db in the cwd:
+python scripts/backfill_matches.py [--discord-id N] [--game league|deadlock|both] [--dry-run]
+python scripts/simulate_deadlock_match.py --discord-id N --result loss|win|unranked|abandoned|placement-loss [--post]
+```
+
+### Tests and lint
+
+CI (`.github/workflows/ci.yml`) runs `ruff check .` and `pytest` on every push and PR. Config for both is in `pyproject.toml`.
+
+```bash
+ruff check .                          # lint; `ruff check . --fix` for the auto-fixable ones
+pytest                                # full suite
+pytest tests/bot/test_severity.py     # one file
+pytest -k remake                      # by name
+```
+
+**Python suite layout.** Tests live in `tests/`, mirroring the source (`tests/bot/`, `tests/api/`).
+- `pyproject.toml` puts `bot/`, `api/` and `tests/` on `sys.path`, so tests use the same bare imports as the app.
+- Shared row builders and queries are in `tests/helpers.py`; Riot match payloads are in `tests/league_fixtures.py`.
+
+**Test database.** Any test that touches the DB takes the `test_db` fixture (`tests/conftest.py`).
+- It repoints `db.engine` and `db.async_session` at a fresh temp SQLite file built by the real `init_db()`.
+- Every test also runs with a temp cwd, so the repo's `bot.db` can't be touched.
+- External APIs are mocked by monkeypatching the name in the module that uses it, e.g. `polling.get_match_details` or `deadlock_polling.get_hero_name`.
+- Discord is replaced by `FakeBot`, whose `get_channel` returns `None`: the task is created and the post is skipped.
+
+**API tests.** These build a FastAPI app from the real routers and call it with `TestClient` and a Bearer JWT from `auth._create_session_jwt`. `tests/api/test_players.py` is skipped: it's the privacy contract for the planned `/players` profiles. Remove its skip marker when that endpoint lands.
+
+**Lint target.** ruff targets py310 on purpose, so it won't suggest `datetime.UTC`; keep using `timezone.utc`.
+
+**Not covered by the suite:**
+- Frontend: check with `npm run build` (type check) and `npm run lint`.
+- Live Deadlock loss flow: use `simulate_deadlock_match.py`. Without `--post` it prints the embed. With `--post` it goes out over REST only, which is safe alongside the live bot.
+
+**Never run the bot locally while the VM's bot is running.** Both would use one Discord token, and interactions would be routed to either process at random. Stop the VM service first.
+
+### Deploying to the VM
+
+SSH details are in the user's memory, not in this repo. The repo lives at `~/lol-accountability-bot`, and `git pull` there uses a read-only deploy key.
+
+1. Push the commit to GitHub; the VM only pulls from there.
+2. Run these on the VM:
+   ```bash
+   cd ~/lol-accountability-bot && git pull
+   ./venv/bin/pip install -r requirements.txt          # only if requirements.txt changed
+   sudo systemctl restart lol-accountability-bot        # bot change
+   sudo systemctl restart lol-accountability-api        # API change
+   cd web && npm install && npm run build               # frontend change; nginx serves dist directly, no restart
+   ```
+3. Confirm the service came back up: `sudo systemctl status <service>` and `journalctl -u <service> -n 20`. Look for a fresh login and command sync with no tracebacks.
+
+## Conventions
+
+**Environment variables (`.env`, template in `.env.example`):**
+- Bot: `DISCORD_TOKEN`, `GUILD_ID` (instant command sync in dev), `RIOT_API_KEY` (dev keys expire every 24 h), `ANNOUNCE_CHANNEL_ID` (polling won't start without it).
+- API: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URI`, `FRONTEND_URL`, `JWT_SECRET`, `COOKIE_SECURE`, `API_PORT` (default 8001).
+  - `DISCORD_REDIRECT_URI` is the frontend-proxied `.../api/auth/callback`, not the API's own port, and it must exactly match the redirect registered with Discord.
+- Optional:
+  - `DEADLOCK_API_KEY`: sent as `X-API-KEY`.
+  - `STEAM_WEB_API_KEY`: lets users link with a `steamcommunity.com/id/` URL.
+  - `SSL_CERT_FILE`: dev PC only, used by `api/auth.py` for Norton's HTTPS interception.
+
+**Schema changes (`bot/db.py`).** There are no migration files. Both processes call `init_db()` on startup, and whichever starts first migrates.
+- **New column:** add it to the model and add an `_add_column_if_missing` call in `init_db()`. That runs `ALTER TABLE`.
+- **Changes `ALTER TABLE` can't make** (relaxing NOT NULL, changing a primary key): these go through `_rebuild_tables`.
+  - It first snapshots the DB to `bot.db.pre-rebuild-<ts>-<pid>.bak` via `VACUUM INTO`, then does create/copy/drop/rename in one transaction.
+  - To roll back, stop both services and copy the snapshot over `bot.db`.
+- **Unused columns:** `users.severity_mode` is unused but kept. Don't drop columns.
+
+**Datetimes.** Rows read back from SQLite have naive datetimes, while freshly created ones are tz-aware. Normalize to UTC before comparing them with `db.as_utc`. Mixing the two crashed `/addtask` in production.
+
+**Polling loops.** An uncaught exception permanently stops a `tasks.loop`. The loop bodies catch errors per user; keep that pattern.
+
+**Adding a command or route.**
+- A new slash command goes in the matching cog under `bot/cogs/`, as a method taking `self, interaction`. A new cog must also be added to `ALL_COGS`. Update `EXPECTED_COMMANDS` in `tests/bot/test_cogs.py`.
+- A new API route goes in the matching `api/routes/` module, importing bot code only via `bot_bridge`. A new module must also be included in `api/routes/__init__.py`.
+- The bot uses only default (non-privileged) intents, because there are no prefix commands or message reading.
+
+**Frontend.**
+- The palette is "Charcoal & Dusty Blue": Tailwind v4 `@theme` tokens in `web/src/index.css`, e.g. `--color-hero` #18181b, `--color-accent` #5b7fa6, `--color-page` #fafaf9, and the warm `--color-tier-{low,medium,high}*` tokens.
+- In match feeds a win is dusty blue and a loss is charcoal.
+- Use the tokens instead of raw hex.
+- The frontend always calls relative `/api/...` paths, which keeps the session cookie same-origin in both dev and prod.

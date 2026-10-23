@@ -1,0 +1,34 @@
+[tool.ruff]
+# Oldest Python the code supports (it uses `X | None`); keeps ruff from
+# suggesting 3.11-only APIs like datetime.UTC in case the VM runs 3.10.
+target-version = "py310"
+line-length = 120
+# bot/ and api/ modules import each other by bare name (see api/bot_bridge.py),
+# so treat everything in these dirs as first-party for import sorting.
+src = ["bot", "api", "tests"]
+extend-exclude = ["venv", "web"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, bugbear, pyupgrade
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Entry points call load_dotenv() before importing modules that read env
+# vars at import time (api/auth.py), and scripts/ add bot/ to sys.path
+# first -- so imports below the top of the file are deliberate there.
+"api/main.py" = ["E402"]
+"api/bot_bridge.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are meant to be argument defaults.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Cookie", "fastapi.Header", "fastapi.Query"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Same bare-import model the bot and API use at runtime.
+pythonpath = ["bot", "api", "tests"]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

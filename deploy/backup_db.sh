@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Backs up bot.db to backups/bot_<timestamp>.db, keeping only the newest
-# $KEEP copies. Run manually or via cron (see deploy/README for the line).
+# $KEEP copies. Run manually or via cron (see the README's Deployment section for the line).
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

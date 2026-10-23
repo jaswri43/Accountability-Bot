@@ -289,8 +289,9 @@ behaves exactly as it did before this feature existed.
   `bot/severity.py`. A High draw soft-resets pity to 60% of its post-loss
   value (`RETAIN_FACTOR`) so hitting High doesn't just keep compounding.
   Remakes (`riot_api.is_remake`, Riot's early-surrender flag) are fully
-  excluded from pity and the tier draw either way; forfeits/short games that
-  actually change LP still count.
+  excluded: no task, no pity change, no tier draw (stored as a placeholder
+  row, like unranked games); forfeits/short games that actually change LP
+  still count.
 - The raw pity number, odds, and tier draw are never shown in the loss/task
   message itself -- only the tone (`bot/tone.py`'s tier-based intro/color
   variants, light for Low up to emphatic for High) hints at severity, and
@@ -589,12 +590,16 @@ Updating the API or frontend follows the same `git pull`-based flow:
 ```
 lol-accountability-bot/
 ├── bot/
-│   ├── main.py            # entry point, bot setup, all slash commands, persistent-view registration
+│   ├── main.py            # entry point: logging, bot setup, adds the cogs, starts the loops, persistent-view registration
+│   ├── cogs/              # slash commands by area: general.py (/ping, /help), accounts.py (/register*, /pitymode, /mute, /unmute), tasks.py (/done, /addtask, /mytasks, /removetask, /status, /stats)
 │   ├── db.py               # SQLAlchemy models (users, processed_matches incl. per-match LP/champion/KDA, tasks incl. tier, task_templates, pity_history) + init_db(), complete_task()
 │   ├── riot_api.py         # thin async Riot API client (americas region + na1 platform routing)
 │   ├── deadlock_api.py      # thin async client for the community deadlock-api.com (429 backoff, ranked/counted/win helpers, rank badges)
 │   ├── steam_ids.py         # /register-deadlock input parsing: friend code, SteamID64, profile/custom URLs
-│   ├── polling.py          # background loops: League match-polling (losses -> tasks, rank tracking), task reminders, shared loss/win helpers
+│   ├── polling.py          # League match-polling loop (losses -> tasks, rank tracking)
+│   ├── loss_flow.py         # loss/win handling shared by both polling loops: task + pity draw, win pity, loss streak, loss embed
+│   ├── reminders.py         # pending-task reminder loop
+│   ├── task_lists.py        # pending tasks / active templates in display order (what every #N refers to)
 │   ├── deadlock_polling.py  # separate Deadlock match-polling loop (ranked only, cutoff at link time)
 │   ├── backfill.py          # last-10-ranked-games history backfill (no pity/tasks/Discord), used by /register* and scripts/
 │   ├── ranked.py            # tier/rank comparison + formatting (LP delta, promotion/demotion detection)
@@ -606,9 +611,9 @@ lol-accountability-bot/
 │   └── logs/                # rotating log files, created on first run (gitignored)
 ├── api/
 │   ├── main.py             # entry point, FastAPI app, CORS, routers, lifespan (init_db)
-│   ├── bot_bridge.py        # puts bot/ on sys.path and re-exports its db/severity/accountability/stats code -- nothing duplicated
+│   ├── bot_bridge.py        # puts bot/ on sys.path and re-exports the bot code the API uses -- nothing duplicated
 │   ├── auth.py              # Discord OAuth2 login/callback + JWT issuing/validation (get_current_user dependency)
-│   ├── routes.py            # /tasks, /task-templates, /status, /me, /stats/overview, /matches, /pity-history, /pity-mode, /deadlock/* -- all scoped to the caller
+│   ├── routes/              # tasks.py (/tasks, /task-templates), account.py (/status, /pity-mode, /me, /pity-history), league.py (/stats/overview, /matches), deadlock.py (/deadlock/*) -- all scoped to the caller
 │   ├── schemas.py           # Pydantic request/response models
 │   └── logs/                 # rotating log files, created on first run (gitignored)
 ├── web/

@@ -185,7 +185,7 @@ class TaskTemplate(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     # Severity tier this task is tagged for ("low"/"medium"/"high") -- new
-    # rows always get one (main.py defaults to "low"), and init_db() below
+    # rows always get one (/addtask defaults to "low"), and init_db() below
     # backfills any pre-existing NULL rows to "low" too. Still nullable at
     # the schema level since that backfill runs at startup, not atomically
     # with column creation.
@@ -323,3 +323,13 @@ async def complete_task(session: AsyncSession, task: Task) -> None:
     defined in exactly one place."""
     task.status = "done"
     task.completed_at = datetime.now(timezone.utc)
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """Rows read back from SQLite have naive (UTC) datetimes, but a row
+    created earlier in the same session still holds the tz-aware value it
+    was constructed with -- comparing the two raises TypeError (this broke
+    /addtask in production). Normalize to aware UTC before comparing."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)

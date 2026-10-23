@@ -13,10 +13,10 @@ duplicated, only enriched (see store_games). An unstored match is only
 inserted if it started before `claim_before`, the account's link time --
 anything newer belongs to the polling loop, which treats it as a real game
 (pity, task, announcement). /register passes claim_before=None (claim
-everything, the same job seed_existing_matches used to do), since at that
-moment nothing has been polled for the account yet.
+everything), since at that moment nothing has been polled for the account
+yet.
 
-Used by /register and /register-deadlock (bot/main.py) for the newly linked
+Used by /register and /register-deadlock (bot/cogs/accounts.py) for the newly linked
 account, and by scripts/backfill_matches.py for every existing user.
 Idempotent: re-running only inserts matches that still aren't stored.
 """
@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from db import GAME_DEADLOCK, GAME_LEAGUE, GAMES, ProcessedMatch, Task, User, async_session
+from db import GAME_DEADLOCK, GAME_LEAGUE, GAMES, ProcessedMatch, Task, User, as_utc, async_session
 from deadlock_api import (
     RANKED_MATCH_MODE,
     DeadlockAPIError,
@@ -101,13 +101,6 @@ class BackfillResult:
             f"{self.inserted} inserted, {self.enriched} enriched, {self.already_stored} already stored, "
             f"{self.left_for_polling} left for polling"
         )
-
-
-def _as_utc(dt: datetime | None) -> datetime | None:
-    # SQLite hands datetimes back naive; everything stored here is UTC.
-    if dt is None or dt.tzinfo is not None:
-        return dt
-    return dt.replace(tzinfo=timezone.utc)
 
 
 # --- League -----------------------------------------------------------------
@@ -257,7 +250,7 @@ async def store_games(
     - Stored with details: left exactly as-is.
     """
     result = BackfillResult()
-    claim_before = _as_utc(claim_before)
+    claim_before = as_utc(claim_before)
 
     def predates_link(g: BackfillGame) -> bool:
         if claim_before is None:

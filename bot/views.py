@@ -1,8 +1,8 @@
-"""Persistent button-based task completion, replacing the old checkmark-
-reaction listener. TaskCompletionView is registered once via bot.add_view()
-in main.py's on_ready so the button on messages posted before a restart
-keeps working -- that's what makes it "persistent" rather than a normal
-view, which stops responding as soon as the process that created it exits.
+"""Persistent button-based task completion. TaskCompletionView is
+registered once via bot.add_view() in main.py's on_ready so the button on
+messages posted before a restart keeps working -- that's what makes it
+"persistent" rather than a normal view, which stops responding as soon as
+the process that created it exits.
 """
 
 import logging

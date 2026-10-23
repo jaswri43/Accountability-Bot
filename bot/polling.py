@@ -1,32 +1,29 @@
-"""Background loops: one polls each registered user's recent ranked League
-matches for losses and assigns an accountability task for each new one
-found; the other periodically reminds users about accountability tasks they
-still haven't completed. Deadlock polling is its own loop in
-deadlock_polling.py, built on the game-agnostic loss/win helpers here
-(create_task_for_loss, record_counted_win, ...).
+"""League match polling: every few minutes, checks each registered,
+unmuted user's recent ranked League matches and handles any new one --
+a counted loss gets a task and an announcement (loss_flow.py), a counted
+win eases pity, and both refresh rank tracking. Deadlock polling is its own
+loop in deadlock_polling.py; the task-reminder loop is in reminders.py.
 
 processed_matches is what makes match-polling idempotent across poll
 cycles/restarts: a (game, match_id, discord_id) triple is only ever handled
 once -- including rows bot/backfill.py wrote for pre-registration history,
 which is how those games stay out of the pity/task flow. Muted users
-(users.muted) are skipped entirely by every loop.
+(users.muted) are skipped.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import tasks
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
-from accountability import pick_task_for_user
-from cosmetic import number_items, sort_by_tier_then_date
-from db import GAME_LEAGUE, PityHistory, ProcessedMatch, Task, User, async_session
+from db import GAME_LEAGUE, ProcessedMatch, User, async_session
+from loss_flow import build_loss_embed, create_task_for_loss, ranked_loss_streak, record_counted_win
 from ranked import describe_change, format_rank, format_tier_rank
 from riot_api import (
     QUEUE_ID_LABELS,
     QUEUE_ID_TO_QUEUE_TYPE,
-    RANKED_QUEUE_IDS,
     RANKED_SOLO_QUEUE_ID,
     RiotAPIError,
     did_player_lose,
@@ -34,11 +31,8 @@ from riot_api import (
     get_match_ids_by_puuid,
     get_participant,
     get_ranked_stats,
-    is_remake,
+    is_counted_ranked,
 )
-from severity import apply_loss_pity, apply_win_pity, get_pity, has_opted_into_severity, pity_meter_for
-from stats import loss_streak_length, sort_matches_recent_first
-from tone import pick_color, pick_intro, pick_severity_color, pick_severity_intro
 from views import TaskCompletionView
 
 log = logging.getLogger("bot.polling")
@@ -46,15 +40,7 @@ log = logging.getLogger("bot.polling")
 POLL_INTERVAL_MINUTES = 5
 MATCHES_TO_CHECK = 10
 
-# How often the reminder loop checks for/sends reminders, and (deliberately
-# the same value) how long since a task's last reminder before it's due for
-# another one -- keeps a still-pending task from getting re-pinged every run.
-REMINDER_INTERVAL_HOURS = 3
-# Don't remind about a task until it's been pending at least this long.
-MIN_TASK_AGE_HOURS = 2
-
 _started = False
-_reminders_started = False
 
 
 def start_polling(bot: discord.Client, channel_id: int) -> None:
@@ -98,87 +84,6 @@ def start_polling(bot: discord.Client, channel_id: int) -> None:
     log.info(f"Started match-polling loop (every {POLL_INTERVAL_MINUTES}m)")
 
 
-def start_reminders(bot: discord.Client, channel_id: int) -> None:
-    """Start the task-reminder loop. Safe to call more than once -- only
-    starts it the first time, same as start_polling."""
-    global _reminders_started
-    if _reminders_started:
-        return
-    _reminders_started = True
-
-    @tasks.loop(hours=REMINDER_INTERVAL_HOURS)
-    async def send_reminders():
-        try:
-            await _send_reminders(bot, channel_id)
-        except Exception:
-            log.exception("Unexpected error in reminder loop; will retry next cycle")
-
-    @send_reminders.before_loop
-    async def before_reminders():
-        await bot.wait_until_ready()
-
-    send_reminders.start()
-    log.info(f"Started task-reminder loop (every {REMINDER_INTERVAL_HOURS}h)")
-
-
-async def _send_reminders(bot: discord.Client, channel_id: int) -> None:
-    channel = bot.get_channel(channel_id)
-    if channel is None:
-        log.error(f"Announce channel {channel_id} not found/accessible; skipping reminders")
-        return
-
-    now = datetime.now(timezone.utc)
-    task_cutoff = now - timedelta(hours=MIN_TASK_AGE_HOURS)
-    reminder_cutoff = now - timedelta(hours=REMINDER_INTERVAL_HOURS)
-
-    async with async_session() as session:
-        result = await session.execute(
-            select(Task)
-            .join(User, User.discord_id == Task.discord_id)
-            .where(
-                Task.status == "pending",
-                Task.created_at <= task_cutoff,
-                User.muted.is_(False),
-                or_(Task.last_reminded_at.is_(None), Task.last_reminded_at <= reminder_cutoff),
-            )
-        )
-        due_tasks = result.scalars().all()
-        if not due_tasks:
-            return
-
-        by_user: dict[int, list[Task]] = {}
-        for task in due_tasks:
-            by_user.setdefault(task.discord_id, []).append(task)
-
-        for discord_id, tasks_for_user in by_user.items():
-            # Number against the user's full pending list (same set/order
-            # /status and /done use), not just this due-for-reminder
-            # subset -- otherwise a number shown here could resolve to a
-            # different task via /done than the one it's actually next to.
-            all_pending_result = await session.execute(
-                select(Task)
-                .where(Task.discord_id == discord_id, Task.status == "pending")
-                .order_by(Task.created_at)
-            )
-            all_pending = sort_by_tier_then_date(all_pending_result.scalars().all())
-            number_by_id = {t.id: n for n, t in number_items(all_pending)}
-
-            lines = "\n".join(
-                f"- #{number_by_id[t.id]}: {t.task_description}" for t in tasks_for_user
-            )
-            embed = discord.Embed(
-                title="Task Reminder",
-                description=f"You still have {len(tasks_for_user)} pending accountability task(s):\n{lines}",
-                color=discord.Color.gold(),
-            )
-            embed.set_footer(text="Mark one done with /done or the Mark Done button on its original message.")
-            await channel.send(content=f"<@{discord_id}>", embed=embed)
-            for task in tasks_for_user:
-                task.last_reminded_at = now
-
-        await session.commit()
-
-
 async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
     try:
         match_ids = await get_match_ids_by_puuid(
@@ -203,8 +108,13 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
             # type=ranked already excludes normals/ARAM/etc, but double-check
             # queueId so only Solo/Duo (420) and Flex (440) get flagged.
             queue_id = match["info"]["queueId"]
-            if queue_id not in RANKED_QUEUE_IDS:
-                session.add(ProcessedMatch(game=GAME_LEAGUE, match_id=match_id, discord_id=user.discord_id, was_loss=False))
+            # Remakes are voided entirely (no task, no pity, no rank
+            # refresh) -- stored as a queue_id-less placeholder like
+            # unranked games, so they also stay out of W/L and streaks.
+            if not is_counted_ranked(match, user.riot_puuid):
+                session.add(
+                    ProcessedMatch(game=GAME_LEAGUE, match_id=match_id, discord_id=user.discord_id, was_loss=False)
+                )
                 continue
 
             was_loss = did_player_lose(match, user.riot_puuid)
@@ -229,7 +139,7 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
             if was_loss:
                 await _assign_task(session, bot, channel_id, user, match_id, match, processed_match)
             else:
-                await _apply_win_pity(session, user, match)
+                await record_counted_win(session, user, GAME_LEAGUE)
                 # Losses already refresh solo/flex rank tracking (below, via
                 # _assign_task); wins need the same refresh so LP-trend data
                 # has a point for every ranked game, not just losses. Also
@@ -244,39 +154,6 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
                         await channel.send(embed=rank_announcement)
 
         await session.commit()
-
-
-async def _apply_win_pity(session, user: User, match: dict) -> None:
-    """League wrapper around record_counted_win: remakes are excluded
-    entirely."""
-    if is_remake(match, user.riot_puuid):
-        return
-    await record_counted_win(session, user, GAME_LEAGUE)
-
-
-async def record_counted_win(session, user: User, game: str) -> None:
-    """Ease off pity on a counted ranked win in `game` (whichever meter the
-    user's pity_mode routes that game to), for users who've opted into
-    severity by tagging a Medium/High task. No-op otherwise. Callers
-    exclude remakes/abandons before calling."""
-    if not await has_opted_into_severity(session, user.discord_id):
-        return
-    tracked_user = await session.get(User, user.discord_id)
-    meter = pity_meter_for(tracked_user, game)
-    apply_win_pity(tracked_user, meter)
-    session.add(PityHistory(discord_id=user.discord_id, meter=meter, pity=get_pity(tracked_user, meter)))
-
-
-async def _get_current_loss_streak(session, discord_id: int) -> int:
-    """How many of the user's most recent ranked League games in a row were
-    losses, stopping at the first win or the start of their recorded
-    history."""
-    result = await session.execute(
-        select(ProcessedMatch).where(
-            ProcessedMatch.discord_id == discord_id, ProcessedMatch.game == GAME_LEAGUE
-        )
-    )
-    return loss_streak_length(sort_matches_recent_first(result.scalars().all()))
 
 
 async def _update_rank_tracking(
@@ -366,12 +243,9 @@ async def _assign_task(
     match: dict,
     processed_match: ProcessedMatch,
 ) -> None:
-    task, tier, note = await create_task_for_loss(
-        session, user, GAME_LEAGUE, match_id, processed_match,
-        exclude_from_pity=is_remake(match, user.riot_puuid),
-    )
+    task, tier, note = await create_task_for_loss(session, user, GAME_LEAGUE, match_id, processed_match)
 
-    streak = await _get_current_loss_streak(session, user.discord_id)
+    streak = await ranked_loss_streak(session, user.discord_id, GAME_LEAGUE)
 
     channel = bot.get_channel(channel_id)
     if channel is None:
@@ -400,86 +274,3 @@ async def _assign_task(
 
     if rank_announcement is not None:
         await channel.send(embed=rank_announcement)
-
-
-async def create_task_for_loss(
-    session,
-    user: User,
-    game: str,
-    match_id: str,
-    processed_match: ProcessedMatch,
-    exclude_from_pity: bool = False,
-) -> tuple[Task, str | None, str | None]:
-    """The game-agnostic half of a ranked loss: pity draw (on the meter
-    the user's pity_mode routes `game` to, if they've opted into severity
-    and the match isn't excluded, e.g. a remake), task pick, and the Task
-    row itself, linked to processed_match. Returns (task, tier, note) --
-    tier is None when no draw happened; note is pick_task_for_user's."""
-    opted_in = await has_opted_into_severity(session, user.discord_id)
-    counted = opted_in and not exclude_from_pity
-
-    tier: str | None = None
-    if counted:
-        tracked_user = await session.get(User, user.discord_id)
-        meter = pity_meter_for(tracked_user, game)
-        tier = apply_loss_pity(tracked_user, meter)  # draws from pre-loss pity, then updates it in place
-        session.add(PityHistory(discord_id=user.discord_id, meter=meter, pity=get_pity(tracked_user, meter)))
-
-    description, note = await pick_task_for_user(session, user.discord_id, tier=tier)
-    # Stores the drawn severity tier (what the pity system decided this
-    # loss was worth), not necessarily the tier of the specific template
-    # `description` came from -- pick_task_for_user can fall back to a
-    # different tier's template (note == "tier_fallback") when none exist
-    # for the drawn one yet. "low" for non-opted-in/non-counted losses,
-    # matching task_templates' own default.
-    task = Task(
-        discord_id=user.discord_id,
-        match_id=match_id,
-        task_description=description,
-        tier=tier if tier is not None else "low",
-        game=game,
-    )
-    session.add(task)
-    await session.flush()  # populate task.id (and let the caller's streak query see this match)
-    processed_match.task_id = task.id
-    return task, tier, note
-
-
-async def build_loss_embed(
-    session, user: User, task: Task, tier: str | None, note: str | None, streak: int
-) -> discord.Embed:
-    """The shared body of a loss announcement (tone, task line, /done
-    hint, setup notes). Callers add their game's fields and footer."""
-    if note == "no_templates":
-        extra_note = "\n*(No custom tasks set for you yet -- use `/addtask` to customize this.)*"
-    elif note == "tier_fallback":
-        extra_note = f"\n*(No **{tier}** tier tasks set up yet -- use `/addtask` with a tier to customize this.)*"
-    else:
-        extra_note = ""
-
-    if tier is not None:
-        intro, color = pick_severity_intro(tier), pick_severity_color(tier)
-    else:
-        intro, color = pick_intro(streak), pick_color(streak)
-
-    # Cosmetic position within the user's current pending list (same
-    # set/order /status and /done use) -- shown instead of task.id so the
-    # `/done number:` hint below actually resolves to this task.
-    pending_result = await session.execute(
-        select(Task)
-        .where(Task.discord_id == user.discord_id, Task.status == "pending")
-        .order_by(Task.created_at)
-    )
-    pending_for_numbering = sort_by_tier_then_date(pending_result.scalars().all())
-    number_by_id = {t.id: n for n, t in number_items(pending_for_numbering)}
-    task_number = number_by_id[task.id]
-
-    return discord.Embed(
-        title="Ranked Loss",
-        description=(
-            f"{intro}\n\n"
-            f"**Task #{task_number}:** {task.task_description}\n\n"
-            f"Mark it done with the button below or `/done number:{task_number}`.{extra_note}"
-        ),
-        color=color,
-    )

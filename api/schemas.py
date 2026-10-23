@@ -40,8 +40,6 @@ class TaskTemplateOut(BaseModel):
 
 class TaskTemplateCreate(BaseModel):
     description: str = Field(min_length=1, max_length=500)
-    # No "threshold" concept exists on task_templates in the current schema
-    # (only description/active/tier) -- just tier here.
     tier: Literal["low", "medium", "high"] = "low"
 
 

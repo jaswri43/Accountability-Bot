@@ -1,14 +1,14 @@
 """Pure statistics computations over already-fetched DB rows -- no session
 or DB access here, that orchestration lives in the callers (polling.py,
-api/routes.py via bot_bridge). Kept separate from ranked.py (which compares
+api/routes/ via bot_bridge). Kept separate from ranked.py (which compares
 two rank snapshots) and severity.py (which drives the pity/tier draw): this
 is a distinct concern, summarizing history for display rather than driving
 any behavior.
 """
 
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Sequence
 
 TIERS = ("low", "medium", "high")
 
@@ -47,7 +47,7 @@ def current_streak(matches_recent_first: Sequence) -> tuple[str, int]:
 def loss_streak_length(matches_recent_first: Sequence) -> int:
     """How many of the most recent games in a row were losses -- 0 if the
     most recent game was a win, or there's no history. What
-    polling.py's loss-announcement footer has always shown; kept as its own
+    the loss announcement's footer has always shown; kept as its own
     function so that specific "always the loss count, 0 otherwise"
     semantics doesn't need reinterpreting at each call site."""
     direction, count = current_streak(matches_recent_first)

@@ -10,8 +10,8 @@ never engages with tiers at all.
 Once opted in, the user's `pity` float (users.pity) rises on counted ranked
 losses and falls on counted ranked wins. Tier odds (Low/Medium/High) are
 computed fresh every time by linearly interpolating between a DEFAULT
-distribution (pity = 0) and a MAX distribution (pity >= PITY_CAP) -- there's
-no separate "banked" state beyond the pity number itself.
+distribution (pity = 0) and a MAX distribution (pity >= PITY_CAP); the pity
+number itself is the only state.
 
 Remakes never touch pity at all; that exclusion is enforced by callers (see
 polling.py) via riot_api.is_remake, not here -- likewise Deadlock's

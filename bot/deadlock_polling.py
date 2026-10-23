@@ -7,8 +7,8 @@ user's users.deadlock_linked_at and isn't in processed_matches yet
 (game = "deadlock"). Unranked and not-counted (abandoned/penalized/not
 scored) matches just get a placeholder processed_matches row so they're
 never looked at again. A ranked loss runs the same pity draw + task flow
-as League (polling.create_task_for_loss); a ranked win applies the same
-win step (polling.record_counted_win).
+as League (loss_flow.create_task_for_loss); a ranked win applies the same
+win step (loss_flow.record_counted_win).
 
 The community API ingests matches late and occasionally misses them, so a
 match can first show up hours after it was played (still handled -- the
@@ -35,8 +35,7 @@ from deadlock_api import (
     is_placement,
     is_ranked,
 )
-from polling import build_loss_embed, create_task_for_loss, record_counted_win
-from stats import loss_streak_length, sort_matches_recent_first
+from loss_flow import build_loss_embed, create_task_for_loss, ranked_loss_streak, record_counted_win
 from views import TaskCompletionView
 
 log = logging.getLogger("bot.deadlock_polling")
@@ -174,26 +173,13 @@ async def process_deadlock_history(
         await session.commit()
 
 
-async def _get_deadlock_loss_streak(session, discord_id: int) -> int:
-    """Consecutive ranked Deadlock losses, newest first. Placeholder rows
-    (unranked/not counted) have no queue_id and are skipped."""
-    result = await session.execute(
-        select(ProcessedMatch).where(
-            ProcessedMatch.discord_id == discord_id,
-            ProcessedMatch.game == GAME_DEADLOCK,
-            ProcessedMatch.queue_id == RANKED_MATCH_MODE,
-        )
-    )
-    return loss_streak_length(sort_matches_recent_first(result.scalars().all()))
-
-
 async def _announce_loss(
     session, bot: discord.Client, channel_id: int, user: User, entry: dict, processed_match: ProcessedMatch
 ) -> None:
     task, tier, note = await create_task_for_loss(
         session, user, GAME_DEADLOCK, processed_match.match_id, processed_match
     )
-    streak = await _get_deadlock_loss_streak(session, user.discord_id)
+    streak = await ranked_loss_streak(session, user.discord_id, GAME_DEADLOCK)
 
     channel = bot.get_channel(channel_id)
     if channel is None:

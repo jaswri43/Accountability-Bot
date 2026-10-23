@@ -115,7 +115,7 @@ def get_current_user(
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session token") from None
     return CurrentUser(discord_id=int(payload["sub"]), username=payload["username"])
 
 
