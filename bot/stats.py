@@ -16,8 +16,10 @@ TIERS = ("low", "medium", "high")
 def match_chronological_key(match_id: str) -> int:
     """Riot match ids are '{platformId}_{gameId}'; gameId increases
     monotonically per platform, giving a reliable recency ordering that
-    doesn't depend on DB insertion order."""
-    return int(match_id.rsplit("_", 1)[1])
+    doesn't depend on DB insertion order. Deadlock match ids are plain
+    monotonically increasing integers, handled by the same split. Only
+    meaningful within one game -- callers filter by game first."""
+    return int(match_id.rsplit("_", 1)[-1])
 
 
 def sort_matches_recent_first(matches: Sequence) -> list:

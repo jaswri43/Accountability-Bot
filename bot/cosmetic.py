@@ -9,7 +9,7 @@ sorting/filtering the list into whatever set and order they want numbered
 first -- these functions just enumerate it.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Protocol, Sequence, TypeVar
 
 T = TypeVar("T")
@@ -32,7 +32,15 @@ def sort_by_tier_then_date(items: Sequence[TT]) -> list[TT]:
     all display and number by. A missing tier sorts as Low, matching the
     rest of the app's "no tier = behaves like Low" convention (severity.py,
     task_templates' own tier backfill)."""
-    return sorted(items, key=lambda item: (_SEVERITY_TIER_RANK.get(item.tier or "low", 0), item.created_at))
+    return sorted(items, key=lambda item: (_SEVERITY_TIER_RANK.get(item.tier or "low", 0), _as_utc(item.created_at)))
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Rows read back from SQLite have naive (UTC) datetimes, but a row
+    created earlier in the same session still holds the tz-aware value it
+    was constructed with -- comparing the two raises TypeError (this broke
+    /addtask in production). Normalize to aware UTC for sorting."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def number_items(items: Sequence[T]) -> list[tuple[int, T]]:

@@ -1,11 +1,13 @@
-"""Background loops: one polls each registered user's recent ranked matches
-for losses and assigns an accountability task for each new one found; the
-other periodically reminds users about accountability tasks they still
-haven't completed.
+"""Background loops: one polls each registered user's recent ranked League
+matches for losses and assigns an accountability task for each new one
+found; the other periodically reminds users about accountability tasks they
+still haven't completed. Deadlock polling is its own loop in
+deadlock_polling.py, built on the game-agnostic loss/win helpers here
+(create_task_for_loss, record_counted_win, ...).
 
 processed_matches is what makes match-polling idempotent across poll
-cycles/restarts: a (match_id, discord_id) pair is only ever handled once.
-Muted users (users.muted) are skipped entirely by both loops.
+cycles/restarts: a (game, match_id, discord_id) triple is only ever handled
+once. Muted users (users.muted) are skipped entirely by every loop.
 """
 
 import logging
@@ -17,7 +19,7 @@ from sqlalchemy import or_, select
 
 from accountability import pick_task_for_user
 from cosmetic import number_items, sort_by_tier_then_date
-from db import PityHistory, ProcessedMatch, Task, User, async_session
+from db import GAME_LEAGUE, PityHistory, ProcessedMatch, Task, User, async_session
 from ranked import describe_change, format_rank, format_tier_rank
 from riot_api import (
     QUEUE_ID_LABELS,
@@ -32,7 +34,7 @@ from riot_api import (
     get_ranked_stats,
     is_remake,
 )
-from severity import apply_loss_pity, apply_win_pity, has_opted_into_severity
+from severity import apply_loss_pity, apply_win_pity, get_pity, has_opted_into_severity, pity_meter_for
 from stats import loss_streak_length, sort_matches_recent_first
 from tone import pick_color, pick_intro, pick_severity_color, pick_severity_intro
 from views import TaskCompletionView
@@ -69,7 +71,10 @@ def start_polling(bot: discord.Client, channel_id: int) -> None:
         try:
             async with async_session() as session:
                 users = (
-                    await session.execute(select(User).where(User.muted.is_(False)))
+                    await session.execute(
+                        # Deadlock-only users have no Riot account to poll.
+                        select(User).where(User.muted.is_(False), User.riot_puuid.is_not(None))
+                    )
                 ).scalars().all()
 
             for user in users:
@@ -186,7 +191,7 @@ async def seed_existing_matches(user: User) -> None:
 
     async with async_session() as session:
         for match_id in match_ids:
-            already_processed = await session.get(ProcessedMatch, (match_id, user.discord_id))
+            already_processed = await session.get(ProcessedMatch, (GAME_LEAGUE, match_id, user.discord_id))
             if already_processed is not None:
                 continue
 
@@ -197,7 +202,7 @@ async def seed_existing_matches(user: User) -> None:
                 continue
 
             was_loss = match["info"]["queueId"] in RANKED_QUEUE_IDS and did_player_lose(match, user.riot_puuid)
-            session.add(ProcessedMatch(match_id=match_id, discord_id=user.discord_id, was_loss=was_loss))
+            session.add(ProcessedMatch(game=GAME_LEAGUE, match_id=match_id, discord_id=user.discord_id, was_loss=was_loss))
 
         await session.commit()
 
@@ -213,7 +218,7 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
 
     async with async_session() as session:
         for match_id in match_ids:
-            already_processed = await session.get(ProcessedMatch, (match_id, user.discord_id))
+            already_processed = await session.get(ProcessedMatch, (GAME_LEAGUE, match_id, user.discord_id))
             if already_processed is not None:
                 continue
 
@@ -227,7 +232,7 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
             # queueId so only Solo/Duo (420) and Flex (440) get flagged.
             queue_id = match["info"]["queueId"]
             if queue_id not in RANKED_QUEUE_IDS:
-                session.add(ProcessedMatch(match_id=match_id, discord_id=user.discord_id, was_loss=False))
+                session.add(ProcessedMatch(game=GAME_LEAGUE, match_id=match_id, discord_id=user.discord_id, was_loss=False))
                 continue
 
             was_loss = did_player_lose(match, user.riot_puuid)
@@ -236,6 +241,7 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
             # the match-history feed and per-queue win/loss record have a
             # complete picture, not just loss-triggered games.
             processed_match = ProcessedMatch(
+                game=GAME_LEAGUE,
                 match_id=match_id,
                 discord_id=user.discord_id,
                 was_loss=was_loss,
@@ -268,20 +274,35 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
 
 
 async def _apply_win_pity(session, user: User, match: dict) -> None:
-    """Ease off pity on a counted ranked win, for users who've opted into
-    severity by tagging a Medium/High task. No-op otherwise, and for
-    remakes (excluded entirely)."""
-    if is_remake(match, user.riot_puuid) or not await has_opted_into_severity(session, user.discord_id):
+    """League wrapper around record_counted_win: remakes are excluded
+    entirely."""
+    if is_remake(match, user.riot_puuid):
+        return
+    await record_counted_win(session, user, GAME_LEAGUE)
+
+
+async def record_counted_win(session, user: User, game: str) -> None:
+    """Ease off pity on a counted ranked win in `game` (whichever meter the
+    user's pity_mode routes that game to), for users who've opted into
+    severity by tagging a Medium/High task. No-op otherwise. Callers
+    exclude remakes/abandons before calling."""
+    if not await has_opted_into_severity(session, user.discord_id):
         return
     tracked_user = await session.get(User, user.discord_id)
-    apply_win_pity(tracked_user)
-    session.add(PityHistory(discord_id=user.discord_id, pity=tracked_user.pity))
+    meter = pity_meter_for(tracked_user, game)
+    apply_win_pity(tracked_user, meter)
+    session.add(PityHistory(discord_id=user.discord_id, meter=meter, pity=get_pity(tracked_user, meter)))
 
 
 async def _get_current_loss_streak(session, discord_id: int) -> int:
-    """How many of the user's most recent ranked games in a row were losses,
-    stopping at the first win or the start of their recorded history."""
-    result = await session.execute(select(ProcessedMatch).where(ProcessedMatch.discord_id == discord_id))
+    """How many of the user's most recent ranked League games in a row were
+    losses, stopping at the first win or the start of their recorded
+    history."""
+    result = await session.execute(
+        select(ProcessedMatch).where(
+            ProcessedMatch.discord_id == discord_id, ProcessedMatch.game == GAME_LEAGUE
+        )
+    )
     return loss_streak_length(sort_matches_recent_first(result.scalars().all()))
 
 
@@ -372,31 +393,10 @@ async def _assign_task(
     match: dict,
     processed_match: ProcessedMatch,
 ) -> None:
-    opted_in = await has_opted_into_severity(session, user.discord_id)
-    counted = opted_in and not is_remake(match, user.riot_puuid)
-
-    tier: str | None = None
-    if counted:
-        tracked_user = await session.get(User, user.discord_id)
-        tier = apply_loss_pity(tracked_user)  # draws from pre-loss pity, then updates it in place
-        session.add(PityHistory(discord_id=user.discord_id, pity=tracked_user.pity))
-
-    description, note = await pick_task_for_user(session, user.discord_id, tier=tier)
-    # Stores the drawn severity tier (what the pity system decided this
-    # loss was worth), not necessarily the tier of the specific template
-    # `description` came from -- pick_task_for_user can fall back to a
-    # different tier's template (note == "tier_fallback") when none exist
-    # for the drawn one yet. "low" for non-opted-in/non-counted losses,
-    # matching task_templates' own default.
-    task = Task(
-        discord_id=user.discord_id,
-        match_id=match_id,
-        task_description=description,
-        tier=tier if tier is not None else "low",
+    task, tier, note = await create_task_for_loss(
+        session, user, GAME_LEAGUE, match_id, processed_match,
+        exclude_from_pity=is_remake(match, user.riot_puuid),
     )
-    session.add(task)
-    await session.flush()  # populate task.id (and let the streak query below see this match)
-    processed_match.task_id = task.id
 
     streak = await _get_current_loss_streak(session, user.discord_id)
 
@@ -414,6 +414,69 @@ async def _assign_task(
     rank_field, rank_announcement, lp_value = await _update_rank_tracking(session, user, queue_id)
     processed_match.lp_after = lp_value
 
+    embed = await build_loss_embed(session, user, task, tier, note, streak)
+    embed.add_field(name="Champion", value=champion, inline=True)
+    embed.add_field(name="KDA", value=kda, inline=True)
+    embed.add_field(name="Queue", value=queue_label, inline=True)
+    if rank_field is not None:
+        embed.add_field(name="Rank", value=rank_field, inline=True)
+    embed.set_footer(text=f"Current streak: {streak} loss{'es' if streak != 1 else ''}")
+
+    message = await channel.send(content=f"<@{user.discord_id}>", embed=embed, view=TaskCompletionView())
+    task.message_id = message.id
+
+    if rank_announcement is not None:
+        await channel.send(embed=rank_announcement)
+
+
+async def create_task_for_loss(
+    session,
+    user: User,
+    game: str,
+    match_id: str,
+    processed_match: ProcessedMatch,
+    exclude_from_pity: bool = False,
+) -> tuple[Task, str | None, str | None]:
+    """The game-agnostic half of a ranked loss: pity draw (on the meter
+    the user's pity_mode routes `game` to, if they've opted into severity
+    and the match isn't excluded, e.g. a remake), task pick, and the Task
+    row itself, linked to processed_match. Returns (task, tier, note) --
+    tier is None when no draw happened; note is pick_task_for_user's."""
+    opted_in = await has_opted_into_severity(session, user.discord_id)
+    counted = opted_in and not exclude_from_pity
+
+    tier: str | None = None
+    if counted:
+        tracked_user = await session.get(User, user.discord_id)
+        meter = pity_meter_for(tracked_user, game)
+        tier = apply_loss_pity(tracked_user, meter)  # draws from pre-loss pity, then updates it in place
+        session.add(PityHistory(discord_id=user.discord_id, meter=meter, pity=get_pity(tracked_user, meter)))
+
+    description, note = await pick_task_for_user(session, user.discord_id, tier=tier)
+    # Stores the drawn severity tier (what the pity system decided this
+    # loss was worth), not necessarily the tier of the specific template
+    # `description` came from -- pick_task_for_user can fall back to a
+    # different tier's template (note == "tier_fallback") when none exist
+    # for the drawn one yet. "low" for non-opted-in/non-counted losses,
+    # matching task_templates' own default.
+    task = Task(
+        discord_id=user.discord_id,
+        match_id=match_id,
+        task_description=description,
+        tier=tier if tier is not None else "low",
+        game=game,
+    )
+    session.add(task)
+    await session.flush()  # populate task.id (and let the caller's streak query see this match)
+    processed_match.task_id = task.id
+    return task, tier, note
+
+
+async def build_loss_embed(
+    session, user: User, task: Task, tier: str | None, note: str | None, streak: int
+) -> discord.Embed:
+    """The shared body of a loss announcement (tone, task line, /done
+    hint, setup notes). Callers add their game's fields and footer."""
     if note == "no_templates":
         extra_note = "\n*(No custom tasks set for you yet -- use `/addtask` to customize this.)*"
     elif note == "tier_fallback":
@@ -438,24 +501,12 @@ async def _assign_task(
     number_by_id = {t.id: n for n, t in number_items(pending_for_numbering)}
     task_number = number_by_id[task.id]
 
-    embed = discord.Embed(
+    return discord.Embed(
         title="Ranked Loss",
         description=(
             f"{intro}\n\n"
-            f"**Task #{task_number}:** {description}\n\n"
+            f"**Task #{task_number}:** {task.task_description}\n\n"
             f"Mark it done with the button below or `/done number:{task_number}`.{extra_note}"
         ),
         color=color,
     )
-    embed.add_field(name="Champion", value=champion, inline=True)
-    embed.add_field(name="KDA", value=kda, inline=True)
-    embed.add_field(name="Queue", value=queue_label, inline=True)
-    if rank_field is not None:
-        embed.add_field(name="Rank", value=rank_field, inline=True)
-    embed.set_footer(text=f"Current streak: {streak} loss{'es' if streak != 1 else ''}")
-
-    message = await channel.send(content=f"<@{user.discord_id}>", embed=embed, view=TaskCompletionView())
-    task.message_id = message.id
-
-    if rank_announcement is not None:
-        await channel.send(embed=rank_announcement)

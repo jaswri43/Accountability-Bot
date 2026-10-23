@@ -17,6 +17,8 @@ class TaskOut(BaseModel):
     status: str
     created_at: datetime
     completed_at: datetime | None
+    # Which game's loss triggered it: "league" or "deadlock".
+    game: str
 
     model_config = {"from_attributes": True}
 
@@ -43,11 +45,29 @@ class TaskTemplateCreate(BaseModel):
     tier: Literal["low", "medium", "high"] = "low"
 
 
+class PityMeterOut(BaseModel):
+    # "shared", "league" or "deadlock".
+    meter: str
+    pity: float
+    odds: dict[str, float]
+
+
 class StatusOut(BaseModel):
     pending_count: int
     opted_into_severity: bool
+    # Kept for older dashboard builds: in shared mode, the one meter; in
+    # separate mode, whichever per-game meter is higher (the worse odds).
+    # New code should read `meters` instead.
     pity: float
     odds: dict[str, float]
+    pity_mode: Literal["shared", "separate"]
+    # The meters in use for pity_mode: just "shared", or "league" and
+    # "deadlock".
+    meters: list[PityMeterOut]
+
+
+class PityModeUpdate(BaseModel):
+    mode: Literal["shared", "separate"]
 
 
 class MeOut(BaseModel):
@@ -57,6 +77,9 @@ class MeOut(BaseModel):
     riot_tag_line: str | None
     registered_at: datetime | None
     muted: bool
+    deadlock_account_id: int | None
+    deadlock_persona_name: str | None
+    pity_mode: Literal["shared", "separate"]
 
 
 class RankQueueOut(BaseModel):
@@ -112,6 +135,7 @@ class MatchTaskOut(BaseModel):
 
 class MatchOut(BaseModel):
     match_id: str
+    game: str = "league"
     queue: str
     was_loss: bool
     champion: str | None
@@ -123,5 +147,43 @@ class MatchOut(BaseModel):
 
 
 class PityHistoryPointOut(BaseModel):
+    # "shared", "league" or "deadlock" -- see GET /pity-history's `meter`.
+    meter: str
     pity: float
     recorded_at: datetime
+
+
+class DeadlockRankOut(BaseModel):
+    # tier * 10 + subrank, e.g. 64 = Ritualist 4.
+    badge: int
+    tier: int
+    subrank: int
+    formatted: str
+    image_url: str
+
+
+class DeadlockOverviewOut(BaseModel):
+    account_id: int
+    persona_name: str | None
+    linked_at: datetime | None
+    # Last-known rank (from the newest polled ranked match, or the lookup
+    # at registration); null if unranked/still placing.
+    rank: DeadlockRankOut | None
+    # Ranked Deadlock games tracked since linking.
+    win_loss: WinLossOut
+    streak: StreakOut
+
+
+class DeadlockMatchOut(BaseModel):
+    match_id: str
+    was_loss: bool
+    hero: str | None
+    kills: int | None
+    deaths: int | None
+    assists: int | None
+    # When the match was played (from the API) vs. when the bot first saw
+    # it -- the community API can lag hours behind.
+    started_at: datetime | None
+    detected_at: datetime
+    rank_after: str | None
+    task: MatchTaskOut | None

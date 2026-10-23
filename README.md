@@ -1,13 +1,99 @@
 # LoL Accountability Bot
 
-Discord bot that tracks League of Legends losses (via the Riot API) and
-assigns accountability tasks after a loss, completable via `/done` or the
-**Mark Done** button on the task message.
+Discord bot that tracks ranked League of Legends losses (via the Riot API)
+and ranked Deadlock losses (via the community
+[deadlock-api.com](https://api.deadlock-api.com/docs)) and assigns
+accountability tasks after a loss, completable via `/done` or the **Mark
+Done** button on the task message.
 
 ## Status
 
 **Live**, running unattended on an Oracle Cloud VM under systemd (see
 Deployment below).
+
+Phase 14: Deadlock as a second game, plus a per-user pity mode.
+
+- **Data source**: `bot/deadlock_api.py` wraps the community API at
+  `https://api.deadlock-api.com` -- not official, not affiliated with Valve.
+  Verified against live data before building: a player's
+  `/v1/players/{account_id}/match-history` entries carry `match_mode`
+  (Valve's `ECitadelMatchMode`: 1 = Unranked, **4 = Ranked**),
+  `player_match_outcome` (1 win, 2 loss, 3/4 penalized, 5 not scored; 0 on
+  entries stored before mid-2026, where the result falls back to
+  `match_result` vs `player_team`), `abandoned_time_s`,
+  `ranked_calibration_match` (placements), and `ranked_display_badge`
+  (`tier * 10 + subrank`, e.g. 64 = Ritualist 4). Optional
+  `DEADLOCK_API_KEY` is sent as `X-API-KEY`; any 429 puts the client into an
+  exponential backoff (60s doubling to 30 min, or `Retry-After` if longer).
+- **`/register-deadlock account`** auto-detects a Steam friend code (= the
+  32-bit account id, used as-is), a SteamID64 (`7656...`, minus
+  76561197960265728), a `steamcommunity.com/profiles/<id64>` URL, a
+  `[U:1:<id>]` SteamID3, or a `steamcommunity.com/id/<name>` custom URL
+  (resolved via Steam's ResolveVanityURL only if `STEAM_WEB_API_KEY` is set;
+  otherwise the reply explains how to find the friend code). One test call
+  confirms the API has data for that account before anything is saved.
+  Re-running it relinks, same upsert as `/register`.
+- **Schema**: users can have League only, Deadlock only, or both, so the
+  `users` Riot columns became nullable and Deadlock columns were added
+  alongside them on the same row (`deadlock_account_id` unique,
+  `deadlock_persona_name`, `deadlock_linked_at`, `deadlock_badge`) --
+  chosen over a separate linked-accounts table because each game is
+  strictly one account per user, and per-game state already lives on
+  `users` (`solo_*`/`flex_*`). `processed_matches` gained `game` **in its
+  primary key** (`game, match_id, discord_id`) so League/Deadlock ids can
+  never collide, plus `started_at`/`badge_after`. `tasks.game` records which
+  game triggered each task; `pity_history.meter` records which pity meter an
+  entry belongs to. SQLite can't relax NOT NULL or change a primary key in
+  place, so `db.py`'s `_rebuild_tables` does the standard
+  create/copy/drop/rename rebuild for `users` and `processed_matches` on
+  first startup, in one transaction, after writing a full snapshot to
+  `bot.db.pre-rebuild-<timestamp>-<pid>.bak` via `VACUUM INTO`. Existing rows are
+  preserved exactly (verified against a copy of the real DB) and backfilled
+  to `game = 'league'` / `meter = 'shared'` / `pity_mode = 'shared'`.
+- **Polling** (`bot/deadlock_polling.py`) is its own `tasks.loop`, every 15
+  minutes (the API's live history is rate limited to 10 req/h per IP
+  without a key, and lags real time anyway), so a Deadlock API failure can't
+  touch League polling. Only matches that *started* after
+  `deadlock_linked_at` are considered -- Deadlock's equivalent of League's
+  history seeding, since a full history can be thousands of matches. Ranked
+  only (placements count); abandoned/penalized/not-scored matches are
+  excluded entirely (no task, no pity) the way League remakes skip pity.
+  Unranked and excluded matches get placeholder `processed_matches` rows
+  (`queue_id` NULL) so they're never re-examined. Late-ingested matches are
+  still handled whenever they show up; matches the API never gets are simply
+  never seen. A ranked loss reuses League's flow (`polling.create_task_for_loss`
+  + `build_loss_embed`, extracted from `_assign_task` with no behavior
+  change); the embed shows Game, Hero, KDA, and current rank (or
+  "Placements"). No LP-style delta or rank-up/down announcements -- Deadlock
+  exposes a progress number but not a clean LP equivalent, so only the
+  current badge is shown. `/mute` stops both loops for that user.
+- **Pity mode** (`users.pity_mode`, `/pitymode shared|separate`, `PUT
+  /pity-mode`): `shared` (default, existing behavior) is one meter
+  (`users.pity`) fed by both games; `separate` gives each game its own
+  (`pity_league`/`pity_deadlock`). Switching to separate starts both at the
+  shared value; switching back takes the **higher** of the two, so switching
+  can never lower pity. Both the command and the route call the same
+  `severity.set_pity_mode()`. `/status` shows one set of odds in shared
+  mode, one per game in separate mode.
+- **API**: `GET /deadlock/overview` (account, persona name, current rank +
+  badge image URL, ranked W/L, streak), `GET /deadlock/matches` (feed with
+  the linked task), `PUT /pity-mode`; `/status` gained `pity_mode` + per-meter
+  `meters` (top-level `pity`/`odds` kept for the current dashboard: the
+  shared meter, or the higher per-game meter in separate mode); `/me` gained
+  the Deadlock account + `pity_mode`; `/tasks` gained `game`;
+  `/pity-history` entries gained `meter` and accept `?meter=`. The web
+  dashboard itself isn't updated yet -- these are ready for it.
+- **Bug fix (affected League too)**: `cosmetic.sort_by_tier_then_date`
+  compared a just-created row's tz-aware `created_at` against rows read back
+  from SQLite as naive datetimes, raising `TypeError` whenever the two
+  shared a tier. That crashed `/addtask` in production (Aug 13 in
+  `bot.log.3`), and a League loss whose drawn tier matched an existing
+  pending task would crash before commit and retry -- and crash -- every
+  cycle. Datetimes are now normalized to UTC for that sort.
+- **Testing without a real loss**: `scripts/simulate_deadlock_match.py`
+  feeds a fabricated match (`--result loss|win|unranked|abandoned|placement-loss`)
+  through the real processing code; `--post` sends the embed via REST only,
+  safe alongside the running bot.
 
 Phase 13: dashboard stats + a full visual restyle ("Charcoal & Dusty
 Blue" -- see `web/src/index.css`'s `@theme` block for the palette).
@@ -240,7 +326,10 @@ have a tone that escalates with the user's current losing streak.
    (the channel loss/task messages get posted to — right-click it in
    Discord with Developer Mode on -> Copy Channel ID). Without
    `ANNOUNCE_CHANNEL_ID` set, the bot still runs but match polling won't
-   start. Never commit `.env` — it's already in `.gitignore`.
+   start. Optional: `DEADLOCK_API_KEY` (higher deadlock-api.com rate
+   limits; Deadlock tracking works without it) and `STEAM_WEB_API_KEY`
+   (lets `/register-deadlock` accept `steamcommunity.com/id/<name>` URLs).
+   Never commit `.env` — it's already in `.gitignore`.
 
 5. **Run the bot:**
    ```bash
@@ -425,7 +514,12 @@ The above is one-time. To ship a code change to the already-running bot:
    them automatically via `ALTER TABLE` on startup -- no manual migration
    step, but worth spot-checking with
    `sqlite3 bot.db "PRAGMA table_info(users);"` on the VM if you want to be
-   sure.
+   sure. Changes SQLite can't do with `ALTER TABLE` (relaxing NOT NULL,
+   changing a primary key) are handled by `_rebuild_tables`, which first
+   snapshots the DB to `bot.db.pre-rebuild-<timestamp>-<pid>.bak` in the repo
+   root -- to roll back, stop both services and copy that file over
+   `bot.db`. Whichever service starts first (bot or API) runs the
+   migration; both call `init_db()`.
 
 Updating the API or frontend follows the same `git pull`-based flow:
 
@@ -443,11 +537,14 @@ lol-accountability-bot/
 │   ├── main.py            # entry point, bot setup, all slash commands, persistent-view registration
 │   ├── db.py               # SQLAlchemy models (users, processed_matches incl. per-match LP/champion/KDA, tasks incl. tier, task_templates, pity_history) + init_db(), complete_task()
 │   ├── riot_api.py         # thin async Riot API client (americas region + na1 platform routing)
-│   ├── polling.py          # background loops: match-polling (losses -> tasks, rank tracking) and task reminders
+│   ├── deadlock_api.py      # thin async client for the community deadlock-api.com (429 backoff, ranked/counted/win helpers, rank badges)
+│   ├── steam_ids.py         # /register-deadlock input parsing: friend code, SteamID64, profile/custom URLs
+│   ├── polling.py          # background loops: League match-polling (losses -> tasks, rank tracking), task reminders, shared loss/win helpers
+│   ├── deadlock_polling.py  # separate Deadlock match-polling loop (ranked only, cutoff at link time)
 │   ├── ranked.py            # tier/rank comparison + formatting (LP delta, promotion/demotion detection)
 │   ├── views.py             # persistent Mark Done button (TaskCompletionView)
 │   ├── accountability.py   # picks a task per-user from task_templates (tier-aware), with a fallback default
-│   ├── severity.py          # pity-based severity odds/tier-draw logic for /severity mode
+│   ├── severity.py          # pity odds/tier draw, pity meters (shared vs per-game) and set_pity_mode()
 │   ├── stats.py              # pure stat computations: streak, win/loss record, completion rate, tier breakdown, activity buckets
 │   ├── tone.py              # picks loss-message wording/embed color from losing-streak length or severity tier
 │   └── logs/                # rotating log files, created on first run (gitignored)
@@ -455,7 +552,7 @@ lol-accountability-bot/
 │   ├── main.py             # entry point, FastAPI app, CORS, routers, lifespan (init_db)
 │   ├── bot_bridge.py        # puts bot/ on sys.path and re-exports its db/severity/accountability/stats code -- nothing duplicated
 │   ├── auth.py              # Discord OAuth2 login/callback + JWT issuing/validation (get_current_user dependency)
-│   ├── routes.py            # /tasks, /task-templates, /status, /me, /stats/overview, /matches, /pity-history -- all scoped to the caller
+│   ├── routes.py            # /tasks, /task-templates, /status, /me, /stats/overview, /matches, /pity-history, /pity-mode, /deadlock/* -- all scoped to the caller
 │   ├── schemas.py           # Pydantic request/response models
 │   └── logs/                 # rotating log files, created on first run (gitignored)
 ├── web/
@@ -469,6 +566,8 @@ lol-accountability-bot/
 │   │   └── App.tsx              # auth gate + react-router routes
 │   ├── vite.config.ts        # dev-server proxy: /api/* -> localhost:8001, prefix stripped
 │   └── dist/                 # npm run build output -- what nginx serves in prod (gitignored)
+├── scripts/
+│   └── simulate_deadlock_match.py        # feed a fake Deadlock match through the real polling code (testing)
 ├── deploy/
 │   ├── lol-accountability-bot.service   # systemd unit for the bot
 │   ├── lol-accountability-api.service   # systemd unit for the API

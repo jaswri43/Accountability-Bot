@@ -11,6 +11,8 @@ venv/
 # Database
 *.db
 *.sqlite3
+# Automatic pre-migration snapshots from bot/db.py's _rebuild_tables
+*.bak
 backups/
 
 # Logs

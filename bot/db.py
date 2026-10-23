@@ -1,12 +1,20 @@
 """SQLAlchemy models and engine/session setup for the bot's SQLite database."""
 
+import logging
+import os
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, ForeignKey, String, text
+from sqlalchemy import Boolean, ForeignKey, MetaData, String, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 DATABASE_URL = "sqlite+aiosqlite:///bot.db"
+
+log = logging.getLogger("bot.db")
+
+GAME_LEAGUE = "league"
+GAME_DEADLOCK = "deadlock"
+GAMES = (GAME_LEAGUE, GAME_DEADLOCK)
 
 engine = create_async_engine(DATABASE_URL)
 async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -20,9 +28,12 @@ class User(Base):
     __tablename__ = "users"
 
     discord_id: Mapped[int] = mapped_column(primary_key=True)
-    riot_puuid: Mapped[str] = mapped_column(String, unique=True)
-    riot_game_name: Mapped[str] = mapped_column(String)
-    riot_tag_line: Mapped[str] = mapped_column(String)
+    # Riot account -- nullable since a user can link Deadlock only. Was
+    # NOT NULL before Deadlock support; init_db()'s users-table rebuild
+    # migrates older databases (SQLite can't relax NOT NULL in place).
+    riot_puuid: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    riot_game_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    riot_tag_line: Mapped[str | None] = mapped_column(String, nullable=True)
     registered_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     muted: Mapped[bool] = mapped_column(Boolean, default=False)
     # Last-known ranked stats per queue, so a new loss's LP change can be
@@ -41,17 +52,48 @@ class User(Base):
     # Unused as of the always-on severity redesign -- see init_db() below
     # for why the column itself is kept rather than dropped.
     severity_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Deadlock account (via the community deadlock-api.com, see
+    # bot/deadlock_api.py). deadlock_account_id is the 32-bit Steam account
+    # id (= Steam friend code). Null if the user hasn't run /register-deadlock.
+    deadlock_account_id: Mapped[int | None] = mapped_column(unique=True, nullable=True)
+    deadlock_persona_name: Mapped[str | None] = mapped_column(nullable=True)
+    # Only Deadlock matches that started at/after this get processed --
+    # Deadlock's equivalent of League's seed_existing_matches (the full
+    # history can be thousands of matches, so a cutoff beats seeding rows).
+    # Reset whenever the linked account changes.
+    deadlock_linked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Last-known rank badge (tier * 10 + subrank, 0 = Obscurus/unranked),
+    # from the most recent polled ranked match or the /rank lookup at
+    # registration. Deadlock ranks aren't LP-based, so only the current
+    # value is kept -- no deltas/announcements.
+    deadlock_badge: Mapped[int | None] = mapped_column(nullable=True)
+    # "shared" (one meter, `pity` above, fed by both games -- the original
+    # behavior) or "separate" (pity_league/pity_deadlock, each fed only by
+    # its own game). Switch only via severity.set_pity_mode(), which
+    # enforces the no-lowering-pity-by-switching rule. The per-game
+    # columns stay null until the user first switches to separate.
+    pity_mode: Mapped[str] = mapped_column(String, default="shared", server_default="shared")
+    pity_league: Mapped[float | None] = mapped_column(nullable=True)
+    pity_deadlock: Mapped[float | None] = mapped_column(nullable=True)
 
 
 class ProcessedMatch(Base):
     __tablename__ = "processed_matches"
 
+    # Part of the primary key so a League and Deadlock match id can never
+    # collide. Added with Deadlock support; init_db()'s processed_matches
+    # rebuild backfills older rows to "league" via the server default.
+    game: Mapped[str] = mapped_column(
+        String, primary_key=True, default=GAME_LEAGUE, server_default=GAME_LEAGUE
+    )
     match_id: Mapped[str] = mapped_column(String, primary_key=True)
     discord_id: Mapped[int] = mapped_column(ForeignKey("users.discord_id"), primary_key=True)
     was_loss: Mapped[bool] = mapped_column(Boolean)
     detected_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     # Everything below is populated only for ranked matches (queue_id in
-    # riot_api.RANKED_QUEUE_IDS), starting from when these columns were
+    # riot_api.RANKED_QUEUE_IDS for League; for Deadlock queue_id holds the
+    # API's match_mode instead, == deadlock_api.RANKED_MATCH_MODE), starting
+    # from when these columns were
     # added -- NULL for older rows and for non-ranked matches (which only
     # ever got a placeholder row here to avoid reprocessing them; their
     # was_loss is meaningless, always False regardless of actual result).
@@ -59,6 +101,7 @@ class ProcessedMatch(Base):
     # record, and LP-trend sparkline, all of which are fine starting from
     # "no data yet" and filling in as new games happen.
     queue_id: Mapped[int | None] = mapped_column(nullable=True)
+    # Champion name for League, hero name for Deadlock.
     champion: Mapped[str | None] = mapped_column(nullable=True)
     kills: Mapped[int | None] = mapped_column(nullable=True)
     deaths: Mapped[int | None] = mapped_column(nullable=True)
@@ -71,6 +114,11 @@ class ProcessedMatch(Base):
     # lets the match-history feed show "here's the task this game
     # triggered" without guessing from descriptions/timestamps.
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    # Deadlock only: match start time (from the API -- detected_at can lag
+    # it by hours since the community API ingests matches late) and the
+    # rank badge shown after the match (null during placements).
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    badge_after: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class PityHistory(Base):
@@ -83,6 +131,10 @@ class PityHistory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     discord_id: Mapped[int] = mapped_column(ForeignKey("users.discord_id"))
+    # Which pity meter this entry belongs to: "shared", "league" or
+    # "deadlock" (see users.pity_mode). Rows from before Deadlock support
+    # are all "shared" -- that was the only meter.
+    meter: Mapped[str] = mapped_column(String, default="shared", server_default="shared")
     pity: Mapped[float] = mapped_column()
     recorded_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -108,6 +160,9 @@ class Task(Base):
     # init_db()'s backfill below), matching the rest of the app's "no tier
     # = behaves like Low" convention.
     tier: Mapped[str | None] = mapped_column(nullable=True)
+    # Which game's loss triggered this task ("league"/"deadlock"); rows
+    # from before Deadlock support are backfilled to "league" in init_db().
+    game: Mapped[str] = mapped_column(String, default=GAME_LEAGUE, server_default=GAME_LEAGUE)
 
 
 class TaskTemplate(Base):
@@ -160,6 +215,27 @@ async def init_db() -> None:
         await _add_column_if_missing(conn, "processed_matches", "task_id", "INTEGER")
         # No backfill for any of the above -- see ProcessedMatch's docstring.
         # pity_history is a brand new table; create_all already made it.
+        # Deadlock support: tasks/pity_history only gained plain additive
+        # columns, so ALTER TABLE is enough for them. users and
+        # processed_matches need full rebuilds -- see below.
+        await _add_column_if_missing(conn, "tasks", "game", "VARCHAR DEFAULT 'league'")
+        await _add_column_if_missing(conn, "pity_history", "meter", "VARCHAR DEFAULT 'shared'")
+        await conn.execute(text("UPDATE tasks SET game = 'league' WHERE game IS NULL"))
+        await conn.execute(text("UPDATE pity_history SET meter = 'shared' WHERE meter IS NULL"))
+
+    # Its own transaction, after the block above has committed: the
+    # pre-rebuild VACUUM INTO backup can't run inside an open transaction.
+    async with engine.begin() as conn:
+        await _rebuild_tables(
+            conn,
+            {
+                # Riot fields became nullable (Deadlock-only users); the
+                # Deadlock/pity-mode columns arrive with the rebuild.
+                "users": lambda cols: cols.get("riot_puuid") == 1,
+                # `game` joined the primary key.
+                "processed_matches": lambda cols: "game" not in cols,
+            },
+        )
 
 
 async def _add_column_if_missing(conn, table: str, column: str, column_type: str) -> None:
@@ -170,6 +246,64 @@ async def _add_column_if_missing(conn, table: str, column: str, column_type: str
     columns = {row[1] for row in result.fetchall()}
     if column not in columns:
         await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"))
+
+
+async def _rebuild_tables(conn, checks: dict) -> None:
+    """SQLite's ALTER TABLE can't relax NOT NULL or change a primary key,
+    so those changes need the standard rebuild: create the new schema
+    under a temp name, copy the rows over, drop the old table, rename.
+    `checks` maps table name -> predicate over that table's current
+    {column_name: notnull_flag}; tables whose predicate is true get rebuilt
+    to match their current model.
+
+    Columns present in both the old table and the model are copied as-is;
+    columns new to the model get their server_default (or NULL). Before
+    touching anything it snapshots the whole database to
+    bot.db.pre-rebuild-<timestamp>-<pid>.bak via VACUUM INTO, so a failed
+    migration is recoverable by copying that file back over bot.db. All
+    rebuilds share one transaction. Idempotent: a no-op once every
+    predicate is false.
+    """
+    async def tables_needing_rebuild() -> dict:
+        found = {}
+        for table, needs_rebuild in checks.items():
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            old_columns = {row[1]: row[3] for row in result.fetchall()}
+            if old_columns and needs_rebuild(old_columns):
+                found[table] = old_columns
+        return found
+
+    if not await tables_needing_rebuild():
+        return
+
+    backup_path = f"bot.db.pre-rebuild-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{os.getpid()}.bak"
+    log.warning(f"Schema change needs a table rebuild; backing up the database to {backup_path} first")
+    await conn.exec_driver_sql(f"VACUUM INTO '{backup_path}'")
+
+    # Explicit BEGIN: the sqlite3 driver doesn't open a transaction for DDL
+    # on its own, and copy/drop/rename has to be all-or-nothing. IMMEDIATE
+    # takes the write lock up front, and the re-check below runs under it --
+    # the bot and API both call init_db() at startup, so if they race, the
+    # second one waits for the first to finish and then finds nothing left
+    # to do. Renaming the new table onto the old name keeps other tables'
+    # foreign keys (which reference it by name) pointing at the right place.
+    await conn.exec_driver_sql("BEGIN IMMEDIATE")
+    old_columns_by_table = await tables_needing_rebuild()
+    # Copy of the full schema so the renamed table's foreign keys resolve.
+    scratch_metadata = MetaData()
+    for model_table in Base.metadata.sorted_tables:
+        model_table.to_metadata(scratch_metadata)
+    for table, old_columns in old_columns_by_table.items():
+        new_table = Base.metadata.tables[table].to_metadata(scratch_metadata, name=f"{table}_new")
+        column_list = ", ".join(c.name for c in new_table.columns if c.name in old_columns)
+        await conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}_new")
+        await conn.run_sync(new_table.create)
+        await conn.exec_driver_sql(
+            f"INSERT INTO {table}_new ({column_list}) SELECT {column_list} FROM {table}"
+        )
+        await conn.exec_driver_sql(f"DROP TABLE {table}")
+        await conn.exec_driver_sql(f"ALTER TABLE {table}_new RENAME TO {table}")
+        log.warning(f"Rebuilt table {table}")
 
 
 async def complete_task(session: AsyncSession, task: Task) -> None:

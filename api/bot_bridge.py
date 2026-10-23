@@ -17,6 +17,8 @@ if str(_BOT_DIR) not in sys.path:
     sys.path.insert(0, str(_BOT_DIR))
 
 from db import (
+    GAME_DEADLOCK,
+    GAME_LEAGUE,
     PityHistory,
     ProcessedMatch,
     Task,
@@ -26,7 +28,15 @@ from db import (
     complete_task,
     init_db,
 )
-from severity import compute_odds, has_opted_into_severity
+from severity import (
+    PITY_MODES,
+    active_meters,
+    compute_odds,
+    get_pity,
+    has_opted_into_severity,
+    set_pity_mode,
+)
+from deadlock_api import RANKED_MATCH_MODE, badge_image_url, format_badge
 from accountability import DEFAULT_TASK_DESCRIPTION
 from cosmetic import number_items, resolve_cosmetic_number, sort_by_tier_then_date
 from ranked import format_rank, format_tier_rank
@@ -42,6 +52,8 @@ from stats import (
 )
 
 __all__ = [
+    "GAME_DEADLOCK",
+    "GAME_LEAGUE",
     "PityHistory",
     "ProcessedMatch",
     "Task",
@@ -50,8 +62,15 @@ __all__ = [
     "async_session",
     "complete_task",
     "init_db",
+    "PITY_MODES",
+    "active_meters",
     "compute_odds",
+    "get_pity",
     "has_opted_into_severity",
+    "set_pity_mode",
+    "RANKED_MATCH_MODE",
+    "badge_image_url",
+    "format_badge",
     "DEFAULT_TASK_DESCRIPTION",
     "number_items",
     "resolve_cosmetic_number",
