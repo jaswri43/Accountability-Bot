@@ -1,9 +1,23 @@
 import type { Match } from "../api/types";
 import { formatDate } from "../lib/tier";
 
-function ResultDot({ won }: { won: boolean }) {
+export function ResultDot({ won }: { won: boolean }) {
   return (
     <span className={`h-2 w-2 shrink-0 rounded-full ${won ? "bg-accent" : "bg-zinc-400"}`} aria-hidden="true" />
+  );
+}
+
+/** The task a loss triggered, shared by the League and Deadlock feeds. */
+export function MatchTaskPill({ status, description }: { status: string; description: string }) {
+  return (
+    <span
+      title={description}
+      className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+        status === "done" ? "bg-accent-soft text-accent-strong" : "bg-zinc-100 text-zinc-600"
+      }`}
+    >
+      {status === "done" ? "Task done" : "Task pending"}
+    </span>
   );
 }
 
@@ -37,15 +51,7 @@ export function MatchHistoryFeed({ matches }: { matches: Match[] | null }) {
                   </p>
                 </div>
               </div>
-              {m.task && (
-                <span
-                  className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    m.task.status === "done" ? "bg-accent-soft text-accent-strong" : "bg-zinc-100 text-zinc-600"
-                  }`}
-                >
-                  {m.task.status === "done" ? "Task done" : "Task pending"}
-                </span>
-              )}
+              {m.task && <MatchTaskPill status={m.task.status} description={m.task.task_description} />}
             </li>
           ))}
         </ul>

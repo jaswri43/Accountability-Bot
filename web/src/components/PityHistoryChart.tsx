@@ -2,10 +2,16 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import type { PityHistoryPoint } from "../api/types";
 import { formatDate } from "../lib/tier";
 
-export function PityHistoryChart({ points }: { points: PityHistoryPoint[] | null }) {
+export function PityHistoryChart({
+  points,
+  title = "Pity over time",
+}: {
+  points: PityHistoryPoint[] | null;
+  title?: string;
+}) {
   return (
     <div className="rounded-3xl border border-hairline bg-white p-5">
-      <p className="text-xs font-medium uppercase tracking-widest text-zinc-500">Pity over time</p>
+      <p className="text-xs font-medium uppercase tracking-widest text-zinc-500">{title}</p>
       {points === null ? (
         <p className="mt-3 text-sm text-zinc-500">Loading…</p>
       ) : points.length < 2 ? (

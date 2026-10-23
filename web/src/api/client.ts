@@ -1,7 +1,11 @@
 import type {
+  DeadlockMatch,
+  DeadlockOverview,
   Match,
   Me,
   PityHistoryPoint,
+  PityMeterName,
+  PityMode,
   StatsOverview,
   StatusResponse,
   Task,
@@ -66,5 +70,10 @@ export const api = {
   logout: () => apiFetch<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   statsOverview: () => apiFetch<StatsOverview>("/stats/overview"),
   matches: (limit = 10) => apiFetch<Match[]>(`/matches?limit=${limit}`),
-  pityHistory: (limit = 50) => apiFetch<PityHistoryPoint[]>(`/pity-history?limit=${limit}`),
+  pityHistory: (meter: PityMeterName, limit = 50) =>
+    apiFetch<PityHistoryPoint[]>(`/pity-history?meter=${meter}&limit=${limit}`),
+  setPityMode: (mode: PityMode) =>
+    apiFetch<StatusResponse>("/pity-mode", { method: "PUT", body: JSON.stringify({ mode }) }),
+  deadlockOverview: () => apiFetch<DeadlockOverview>("/deadlock/overview"),
+  deadlockMatches: (limit = 10) => apiFetch<DeadlockMatch[]>(`/deadlock/matches?limit=${limit}`),
 };

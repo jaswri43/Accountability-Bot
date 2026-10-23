@@ -1,6 +1,9 @@
 // Mirrors api/schemas.py exactly -- keep these in sync with the backend.
 
 export type Tier = "low" | "medium" | "high";
+export type Game = "league" | "deadlock";
+export type PityMode = "shared" | "separate";
+export type PityMeterName = "shared" | Game;
 
 export interface Task {
   id: number;
@@ -12,6 +15,8 @@ export interface Task {
   status: string;
   created_at: string;
   completed_at: string | null;
+  // Which game's loss triggered this task.
+  game: Game;
 }
 
 export interface TaskTemplate {
@@ -25,11 +30,24 @@ export interface TaskTemplate {
   created_at: string;
 }
 
+export type Odds = { low: number; medium: number; high: number };
+
+export interface PityMeter {
+  meter: PityMeterName;
+  pity: number;
+  odds: Odds;
+}
+
 export interface StatusResponse {
   pending_count: number;
   opted_into_severity: boolean;
+  // Legacy single value: the shared meter, or the higher per-game meter in
+  // separate mode. Prefer `meters`.
   pity: number;
-  odds: { low: number; medium: number; high: number };
+  odds: Odds;
+  pity_mode: PityMode;
+  // Just "shared" in shared mode; "league" and "deadlock" in separate mode.
+  meters: PityMeter[];
 }
 
 export interface Me {
@@ -39,6 +57,9 @@ export interface Me {
   riot_tag_line: string | null;
   registered_at: string | null;
   muted: boolean;
+  deadlock_account_id: number | null;
+  deadlock_persona_name: string | null;
+  pity_mode: PityMode;
 }
 
 export interface RankQueue {
@@ -104,6 +125,40 @@ export interface Match {
 }
 
 export interface PityHistoryPoint {
+  meter: PityMeterName;
   pity: number;
   recorded_at: string;
+}
+
+export interface DeadlockRank {
+  // tier * 10 + subrank, e.g. 64 = Ritualist 4.
+  badge: number;
+  tier: number;
+  subrank: number;
+  formatted: string;
+  image_url: string;
+}
+
+export interface DeadlockOverview {
+  account_id: number;
+  persona_name: string | null;
+  linked_at: string | null;
+  // Null while unranked / still in placements.
+  rank: DeadlockRank | null;
+  win_loss: WinLoss;
+  streak: Streak;
+}
+
+export interface DeadlockMatch {
+  match_id: string;
+  was_loss: boolean;
+  hero: string | null;
+  kills: number | null;
+  deaths: number | null;
+  assists: number | null;
+  // When it was played; detected_at can lag hours behind (community API).
+  started_at: string | null;
+  detected_at: string;
+  rank_after: string | null;
+  task: MatchTask | null;
 }

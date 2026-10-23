@@ -1,10 +1,10 @@
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { StatusResponse } from "../api/types";
+import type { Odds } from "../api/types";
 import { TIER_HEX } from "../lib/tier";
 
 /** Lives inside HeroOddsCard's dark card, so its own colors are tuned for
  * a charcoal background -- not meant to be dropped onto a light one. */
-export function OddsChart({ odds }: { odds: StatusResponse["odds"] }) {
+export function OddsChart({ odds }: { odds: Odds }) {
   const data = [
     { name: "Low", value: odds.low, color: TIER_HEX.low },
     { name: "Medium", value: odds.medium, color: TIER_HEX.medium },

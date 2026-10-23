@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { Task } from "../api/types";
+import { GameBadge } from "../components/GameBadge";
 import { formatDate } from "../lib/tier";
 
 function StatusBadge({ status }: { status: string }) {
@@ -56,6 +57,9 @@ export function History() {
                     Task
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
+                    Game
+                  </th>
+                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
                     Status
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
@@ -71,6 +75,9 @@ export function History() {
                   <tr key={task.id}>
                     <td className="px-5 py-3 text-sm text-zinc-500">{task.number}</td>
                     <td className="px-5 py-3 text-sm text-zinc-900">{task.task_description}</td>
+                    <td className="px-5 py-3">
+                      <GameBadge game={task.game} />
+                    </td>
                     <td className="px-5 py-3">
                       <StatusBadge status={task.status} />
                     </td>

@@ -11,6 +11,27 @@ Done** button on the task message.
 **Live**, running unattended on an Oracle Cloud VM under systemd (see
 Deployment below).
 
+Phase 15: dashboard split into **Overview / League / Deadlock** tabs
+(`web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/`), same Charcoal
+& Dusty Blue styling. The active tab is kept in `?tab=` so a refresh keeps it.
+
+- **Overview** (game-agnostic): pending tasks from both games, each with a
+  League/Deadlock badge (`GameBadge`), task completion rate, tasks by tier,
+  the completed-over-time chart, and the **pity mode** setting
+  (`PityModeCard` -> `PUT /pity-mode`, the same switch as `/pitymode`).
+- **League**: Riot ID, ranked win rate/streak, Solo/Duo + Flex rank cards with
+  LP trend, match feed.
+- **Deadlock**: Steam name, ranked win rate/streak, current rank badge
+  (image from deadlock-api.com), match feed with hero, KDA, result, rank
+  after the game and the linked task.
+- The pity hero card + pity-over-time chart (`PitySection`) appear once on
+  Overview in shared mode, or once per game tab (that game's meter only, via
+  `/pity-history?meter=`) in separate mode.
+- A game tab whose account isn't linked shows `LinkGamePrompt` (which
+  Discord command to run) instead of empty cards or a 404.
+- History gained a Game column. The header now wraps instead of overflowing
+  at phone width.
+
 Phase 14: Deadlock as a second game, plus a per-user pity mode.
 
 - **Data source**: `bot/deadlock_api.py` wraps the community API at
@@ -559,9 +580,9 @@ lol-accountability-bot/
 │   ├── src/
 │   │   ├── api/               # client.ts (fetch wrapper + endpoint calls) + types.ts (mirrors api/schemas.py)
 │   │   ├── context/            # AuthContext.tsx -- calls GET /me on mount, gates the whole app
-│   │   ├── components/         # Layout.tsx (nav), HeroOddsCard/OddsChart, RankCard, StatTile, TierBreakdownCard, ActivityChart, MatchHistoryFeed, PityHistoryChart, Sparkline, TierBadge
-│   │   ├── pages/               # Login.tsx, Dashboard.tsx, History.tsx, Templates.tsx
-│   │   ├── lib/tier.ts          # tier labels/colors + UTC-safe date formatting
+│   │   ├── components/         # Layout.tsx (nav), HeroOddsCard/OddsChart, PitySection, PityModeCard, RankCard, DeadlockRankCard, StatTile, TierBreakdownCard, ActivityChart, MatchHistoryFeed, DeadlockMatchFeed, PityHistoryChart, Sparkline, TierBadge, GameBadge, LinkGamePrompt
+│   │   ├── pages/               # Login.tsx, Dashboard.tsx (tab container) + dashboard/ (OverviewTab, LeagueTab, DeadlockTab), History.tsx, Templates.tsx
+│   │   ├── lib/                 # tier.ts (tier labels/colors + UTC-safe date formatting), game.ts (game labels, streak text)
 │   │   ├── index.css            # Tailwind v4 @theme block -- the "Charcoal & Dusty Blue" palette tokens
 │   │   └── App.tsx              # auth gate + react-router routes
 │   ├── vite.config.ts        # dev-server proxy: /api/* -> localhost:8001, prefix stripped

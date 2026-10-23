@@ -18,8 +18,8 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-page">
       <header className="border-b border-hairline bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-6">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <span className="text-lg font-normal tracking-tight text-zinc-900">
               LoL Accountability
             </span>
@@ -36,7 +36,7 @@ export function Layout() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-zinc-500">{user?.discord_username}</span>
+            <span className="hidden text-sm text-zinc-500 sm:inline">{user?.discord_username}</span>
             <button
               type="button"
               onClick={handleLogout}

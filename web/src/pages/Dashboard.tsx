@@ -1,167 +1,168 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Match, PityHistoryPoint, StatsOverview, StatusResponse, Task } from "../api/types";
+import type { Game, PityHistoryPoint, PityMeterName, PityMode, StatusResponse } from "../api/types";
 import { useAuth } from "../context/AuthContext";
-import { HeroOddsCard } from "../components/HeroOddsCard";
-import { RankCard } from "../components/RankCard";
-import { StatTile } from "../components/StatTile";
-import { TierBreakdownCard } from "../components/TierBreakdownCard";
-import { ActivityChart } from "../components/ActivityChart";
-import { MatchHistoryFeed } from "../components/MatchHistoryFeed";
-import { PityHistoryChart } from "../components/PityHistoryChart";
-import { formatDate } from "../lib/tier";
-import type { Tier, TierStat, WinLoss } from "../api/types";
+import { GAME_LABEL } from "../lib/game";
+import { LinkGamePrompt } from "../components/LinkGamePrompt";
+import { PityModeCard } from "../components/PityModeCard";
+import { PitySection } from "../components/PitySection";
+import { DeadlockTab } from "./dashboard/DeadlockTab";
+import { ErrorBanner } from "./dashboard/ErrorBanner";
+import { LeagueTab } from "./dashboard/LeagueTab";
+import { OverviewTab } from "./dashboard/OverviewTab";
 
-const EMPTY_TIER_STAT: TierStat = { count: 0, completed: 0, completion_rate: 0 };
-const EMPTY_TIER_BREAKDOWN: Record<Tier, TierStat> = {
-  low: EMPTY_TIER_STAT,
-  medium: EMPTY_TIER_STAT,
-  high: EMPTY_TIER_STAT,
-};
-const EMPTY_WIN_LOSS: WinLoss = { wins: 0, losses: 0, win_rate: 0 };
+type TabId = "overview" | Game;
 
+const TABS: { id: TabId; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "league", label: "League" },
+  { id: "deadlock", label: "Deadlock" },
+];
+
+function parseTab(value: string | null): TabId {
+  return TABS.some((t) => t.id === value) ? (value as TabId) : "overview";
+}
+
+/** Tab container. Owns /status and pity history (they decide which tab
+ * shows which pity meter); each tab fetches its own stats when shown. The
+ * active tab lives in ?tab= so a refresh or shared link keeps it. */
 export function Dashboard() {
   const { user } = useAuth();
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [overview, setOverview] = useState<StatsOverview | null>(null);
-  const [matches, setMatches] = useState<Match[] | null>(null);
-  const [pityHistory, setPityHistory] = useState<PityHistoryPoint[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [completingId, setCompletingId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseTab(searchParams.get("tab"));
 
-  useEffect(() => {
-    Promise.all([api.status(), api.tasks("pending"), api.statsOverview(), api.matches(8), api.pityHistory(30)])
-      .then(([s, t, o, m, p]) => {
-        setStatus(s);
-        setTasks(t);
-        setOverview(o);
-        setMatches(m);
-        setPityHistory(p);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof ApiError) setError(err.message);
-      });
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [pityHistory, setPityHistory] = useState<Partial<Record<PityMeterName, PityHistoryPoint[]>>>({});
+  const [savingMode, setSavingMode] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    const s = await api.status();
+    // Only the meters in use for the current mode are ever displayed.
+    const histories = await Promise.all(s.meters.map((m) => api.pityHistory(m.meter, 30)));
+    setStatus(s);
+    setPityHistory(Object.fromEntries(s.meters.map((m, i) => [m.meter, histories[i]])));
   }, []);
 
-  async function markDone(taskId: number) {
-    setCompletingId(taskId);
+  const reportError = (err: unknown) => {
+    if (err instanceof ApiError) setError(err.message);
+  };
+
+  useEffect(() => {
+    loadStatus().catch(reportError);
+  }, [loadStatus]);
+
+  async function changePityMode(mode: PityMode) {
+    setSavingMode(true);
     setError(null);
     try {
-      await api.completeTask(taskId);
-      // Re-fetch rather than patch local state: completing a task can
-      // renumber the rest of the pending list (tier-sorted order, same
-      // reasoning as Templates.tsx's create/delete), and also changes
-      // overview's completion rate, tier breakdown, and activity chart --
-      // more than a local pending_count decrement would ever capture.
-      const [t, s, o] = await Promise.all([api.tasks("pending"), api.status(), api.statsOverview()]);
-      setTasks(t);
-      setStatus(s);
-      setOverview(o);
+      await api.setPityMode(mode);
+      await loadStatus();
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
+      reportError(err);
     } finally {
-      setCompletingId(null);
+      setSavingMode(false);
     }
   }
 
-  const riotId = user?.riot_game_name
-    ? `${user.riot_game_name}#${user.riot_tag_line}`
-    : "Not linked yet — use /register in Discord";
+  const separate = status?.pity_mode === "separate";
+  const optedIn = status?.opted_into_severity ?? true;
 
-  const winRate = overview ? Math.round(overview.win_loss_overall.win_rate * 100) : null;
-  const completionRate = overview ? Math.round(overview.task_completion_rate * 100) : null;
-  const streakLabel =
-    overview && overview.streak.count > 0
-      ? `${overview.streak.count}-game ${overview.streak.direction === "win" ? "win" : "loss"} streak`
-      : "No streak yet";
+  function pitySectionFor(meter: PityMeterName) {
+    return (
+      <PitySection
+        meter={status?.meters.find((m) => m.meter === meter) ?? null}
+        history={pityHistory[meter] ?? null}
+        optedIn={optedIn}
+        gameLabel={meter === "shared" ? undefined : GAME_LABEL[meter]}
+      />
+    );
+  }
+
+  const riotLinked = Boolean(user?.riot_game_name);
+  const deadlockLinked = user?.deadlock_account_id != null;
+  const linkedSummary = [
+    riotLinked ? `League: ${user?.riot_game_name}#${user?.riot_tag_line}` : null,
+    deadlockLinked ? `Deadlock: ${user?.deadlock_persona_name ?? user?.deadlock_account_id}` : null,
+  ].filter(Boolean);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-normal tracking-tight text-zinc-900">
-          Welcome back, {user?.discord_username}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">Riot ID: {riotId}</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-normal tracking-tight text-zinc-900">
+            Welcome back, {user?.discord_username}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {linkedSummary.length > 0
+              ? linkedSummary.join(" · ")
+              : "No game linked yet — use /register or /register-deadlock in Discord"}
+          </p>
+        </div>
+        <div className="inline-flex rounded-full border border-hairline bg-white p-1" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setSearchParams(t.id === "overview" ? {} : { tab: t.id })}
+              className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
+                tab === t.id ? "bg-hero text-white" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {error && (
-        <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-600/20">
-          {error}
-        </div>
+      {error && <ErrorBanner message={error} />}
+
+      {tab === "overview" && (
+        <OverviewTab
+          status={status}
+          onTasksChanged={() => loadStatus().catch(reportError)}
+          pityModeCard={
+            <PityModeCard mode={status?.pity_mode ?? null} saving={savingMode} onChange={changePityMode} />
+          }
+          pitySection={
+            separate ? (
+              <p className="-mt-2 text-sm text-zinc-500">
+                Separate mode: each game's odds and pity history are on its own tab.
+              </p>
+            ) : (
+              pitySectionFor("shared")
+            )
+          }
+        />
       )}
 
-      {/* Quick stats */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatTile label="Pending tasks" value={status ? status.pending_count : "—"} />
-        <StatTile label="Win rate" value={winRate !== null ? `${winRate}%` : "—"} accent={winRate !== null && winRate >= 50} />
-        <StatTile label="Streak" value={overview ? overview.streak.count || "—" : "—"} hint={overview ? streakLabel : undefined} />
-        <StatTile label="Task completion" value={completionRate !== null ? `${completionRate}%` : "—"} accent />
-      </div>
-
-      {/* Hero pity/odds card + rank */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <HeroOddsCard status={status} />
-        </div>
-        <div className="flex flex-col gap-4">
-          <RankCard
-            label="Solo/Duo"
-            rank={overview?.solo_rank ?? null}
-            winLoss={overview?.win_loss_solo ?? EMPTY_WIN_LOSS}
+      {tab === "league" &&
+        (riotLinked ? (
+          <LeagueTab
+            riotId={`${user?.riot_game_name}#${user?.riot_tag_line}`}
+            pitySection={separate ? pitySectionFor("league") : null}
           />
-          <RankCard
-            label="Flex"
-            rank={overview?.flex_rank ?? null}
-            winLoss={overview?.win_loss_flex ?? EMPTY_WIN_LOSS}
-          />
-        </div>
-      </div>
-
-      {/* Tier breakdown + activity */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <TierBreakdownCard breakdown={overview?.tier_breakdown ?? EMPTY_TIER_BREAKDOWN} />
-        <ActivityChart activity={overview?.activity ?? null} />
-      </div>
-
-      {/* Pending tasks */}
-      <div className="rounded-3xl border border-hairline bg-white">
-        <div className="border-b border-hairline px-5 py-4">
-          <p className="text-xs font-medium uppercase tracking-widest text-zinc-500">Pending tasks</p>
-        </div>
-        {tasks === null ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">Loading…</p>
-        ) : tasks.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">No pending tasks right now. 🎉</p>
         ) : (
-          <ul className="divide-y divide-hairline">
-            {tasks.map((task) => (
-              <li key={task.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                <div>
-                  <p className="text-sm text-zinc-900">
-                    <span className="text-zinc-500">#{task.number}</span> {task.task_description}
-                  </p>
-                  <p className="mt-0.5 text-xs text-zinc-500">Assigned {formatDate(task.created_at)}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={completingId === task.id}
-                  onClick={() => markDone(task.id)}
-                  className="shrink-0 rounded-full bg-hero px-3.5 py-1.5 text-sm text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {completingId === task.id ? "Marking…" : "Mark Done"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+          <LinkGamePrompt
+            game="League"
+            command="/register game_name tag_line"
+            hint="Only ranked Solo/Duo and Flex games count."
+          />
+        ))}
 
-      {/* Match history + pity history */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <MatchHistoryFeed matches={matches} />
-        <PityHistoryChart points={pityHistory} />
-      </div>
+      {tab === "deadlock" &&
+        (deadlockLinked ? (
+          <DeadlockTab pitySection={separate ? pitySectionFor("deadlock") : null} />
+        ) : (
+          <LinkGamePrompt
+            game="Deadlock"
+            command="/register-deadlock account"
+            hint="Use your Steam friend code (Steam → Friends → Add a Friend) or your Steam profile link. Only ranked games count."
+          />
+        ))}
     </div>
   );
 }
