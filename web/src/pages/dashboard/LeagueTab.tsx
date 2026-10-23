@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { api, ApiError } from "../../api/client";
-import type { Match, StatsOverview, WinLoss } from "../../api/types";
+import type { LeagueStats, Match, WinLoss } from "../../api/types";
 import { MatchHistoryFeed } from "../../components/MatchHistoryFeed";
 import { RankCard } from "../../components/RankCard";
 import { StatTile } from "../../components/StatTile";
@@ -10,34 +10,28 @@ import { ErrorBanner } from "./ErrorBanner";
 
 const EMPTY_WIN_LOSS: WinLoss = { wins: 0, losses: 0, win_rate: 0 };
 
-/** Only rendered once the user has a Riot ID linked -- Dashboard shows
- * LinkGamePrompt instead otherwise. */
-export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection: ReactNode }) {
-  const [overview, setOverview] = useState<StatsOverview | null>(null);
-  const [matches, setMatches] = useState<Match[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Overview refreshes alongside the feed so W/L and streak stay in step
-  // with newly polled games.
-  useAutoRefresh(() => {
-    Promise.all([api.statsOverview(), api.matches(10)])
-      .then(([o, m]) => {
-        setOverview(o);
-        setMatches(m);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        if (err instanceof ApiError) setError(err.message);
-      });
-  });
-
-  const record = overview?.win_loss_overall;
+/** The League tab's layout, from already-loaded data -- shared by your own
+ * dashboard (LeagueTab) and another player's profile (PlayerProfile). */
+export function LeagueStatsView({
+  riotId,
+  stats,
+  matches,
+  banner,
+  pitySection,
+}: {
+  riotId: string;
+  stats: LeagueStats | null;
+  matches: Match[] | null;
+  banner?: ReactNode;
+  pitySection?: ReactNode;
+}) {
+  const record = stats?.win_loss_overall;
   const winRate = record && record.wins + record.losses > 0 ? Math.round(record.win_rate * 100) : null;
 
   return (
     <div className="space-y-6">
       <p className="text-sm text-zinc-500">Riot ID: {riotId}</p>
-      {error && <ErrorBanner message={error} />}
+      {banner}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <StatTile
@@ -48,8 +42,8 @@ export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection
         />
         <StatTile
           label="Streak"
-          value={overview ? overview.streak.count || "—" : "—"}
-          hint={overview ? streakLabel(overview.streak) : undefined}
+          value={stats ? stats.streak.count || "—" : "—"}
+          hint={stats ? streakLabel(stats.streak) : undefined}
         />
         <div className="col-span-2 sm:col-span-1">
           <StatTile label="Ranked games tracked" value={record ? record.wins + record.losses : "—"} hint="Solo/Duo + Flex" />
@@ -58,8 +52,8 @@ export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-4">
-          <RankCard label="Solo/Duo" rank={overview?.solo_rank ?? null} winLoss={overview?.win_loss_solo ?? EMPTY_WIN_LOSS} />
-          <RankCard label="Flex" rank={overview?.flex_rank ?? null} winLoss={overview?.win_loss_flex ?? EMPTY_WIN_LOSS} />
+          <RankCard label="Solo/Duo" rank={stats?.solo_rank ?? null} winLoss={stats?.win_loss_solo ?? EMPTY_WIN_LOSS} />
+          <RankCard label="Flex" rank={stats?.flex_rank ?? null} winLoss={stats?.win_loss_flex ?? EMPTY_WIN_LOSS} />
         </div>
         <div className="lg:col-span-2">
           <MatchHistoryFeed matches={matches} />
@@ -68,5 +62,37 @@ export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection
 
       {pitySection}
     </div>
+  );
+}
+
+/** Only rendered once the user has a Riot ID linked -- Dashboard shows
+ * LinkGamePrompt instead otherwise. */
+export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection: ReactNode }) {
+  const [stats, setStats] = useState<LeagueStats | null>(null);
+  const [matches, setMatches] = useState<Match[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Overview refreshes alongside the feed so W/L and streak stay in step
+  // with newly polled games.
+  useAutoRefresh(() => {
+    Promise.all([api.statsOverview(), api.matches(10)])
+      .then(([o, m]) => {
+        setStats(o);
+        setMatches(m);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof ApiError) setError(err.message);
+      });
+  });
+
+  return (
+    <LeagueStatsView
+      riotId={riotId}
+      stats={stats}
+      matches={matches}
+      banner={error && <ErrorBanner message={error} />}
+      pitySection={pitySection}
+    />
   );
 }

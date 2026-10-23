@@ -1,8 +1,14 @@
-import type { DeadlockOverview } from "../api/types";
+import type { DeadlockStats } from "../api/types";
 
 /** Deadlock's counterpart to RankCard. Deadlock ranks are badge tiers
  * (e.g. "Ritualist 4"), not LP, so there's no LP trend/sparkline here. */
-export function DeadlockRankCard({ overview }: { overview: DeadlockOverview | null }) {
+export function DeadlockRankCard({
+  stats: overview,
+  asOf = "As of your latest tracked ranked match",
+}: {
+  stats: DeadlockStats | null;
+  asOf?: string;
+}) {
   const winLoss = overview?.win_loss;
   return (
     <div className="rounded-3xl border border-hairline bg-white p-5">
@@ -21,7 +27,7 @@ export function DeadlockRankCard({ overview }: { overview: DeadlockOverview | nu
           />
           <div>
             <p className="text-xl font-medium text-zinc-900">{overview.rank.formatted}</p>
-            <p className="mt-0.5 text-xs text-zinc-500">As of your latest tracked ranked match</p>
+            <p className="mt-0.5 text-xs text-zinc-500">{asOf}</p>
           </div>
         </div>
       ) : (

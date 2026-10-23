@@ -10,3 +10,8 @@ export function streakLabel(streak: Streak): string {
     ? `${streak.count}-game ${streak.direction === "win" ? "win" : "loss"} streak`
     : "No streak yet";
 }
+
+/** Display name for another player; null until the bot has seen their Discord name. */
+export function playerName(name: string | null): string {
+  return name ?? "Unknown player";
+}

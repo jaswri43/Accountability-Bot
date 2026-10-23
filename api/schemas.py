@@ -78,6 +78,8 @@ class MeOut(BaseModel):
     deadlock_account_id: int | None
     deadlock_persona_name: str | None
     pity_mode: Literal["shared", "separate"]
+    # Hidden from other players' Players tab (see routes/players.py).
+    profile_hidden: bool
 
 
 class RankQueueOut(BaseModel):
@@ -191,3 +193,81 @@ class DeadlockMatchOut(BaseModel):
     rank_after: str | None
     backfilled: bool
     task: MatchTaskOut | None
+
+
+class ProfileVisibilityUpdate(BaseModel):
+    hidden: bool
+
+
+class ProfileVisibilityOut(BaseModel):
+    hidden: bool
+
+
+# --- Other players' profiles (routes/players.py) ------------------------------
+# Deliberately separate models from the caller's own (StatusOut,
+# DeadlockOverviewOut, TaskOut, ...) so nothing private can leak in by a
+# field being added there: no Steam account id, no raw pity, no task ids,
+# no task templates, no completed-task history.
+
+
+class PlayerSummaryOut(BaseModel):
+    discord_id: int
+    # Null until the bot has seen this user's Discord name (see bot/profiles.py).
+    discord_username: str | None
+    is_you: bool
+    # "league" and/or "deadlock".
+    games: list[str]
+    riot_id: str | None
+    # Solo/Duo rank if placed there, else Flex; null if unranked/unlinked.
+    league_rank: str | None
+    deadlock_rank: str | None
+    pending_count: int
+    task_completion_rate: float
+
+
+class PlayerOddsOut(BaseModel):
+    # "shared", "league" or "deadlock" -- one entry per meter in use for
+    # the player's pity_mode.
+    meter: str
+    # Whole percentages, {"low": 47, "medium": 33, "high": 20}.
+    odds_percent: dict[str, int]
+
+
+class PlayerTaskOut(BaseModel):
+    description: str
+    tier: str | None
+    game: str
+    assigned_at: datetime
+
+
+class PlayerLeagueOut(BaseModel):
+    riot_id: str
+    solo_rank: RankQueueOut | None
+    flex_rank: RankQueueOut | None
+    win_loss_overall: WinLossOut
+    win_loss_solo: WinLossOut
+    win_loss_flex: WinLossOut
+    streak: StreakOut
+    # Last 10 ranked games; `task` is always null here.
+    matches: list[MatchOut]
+
+
+class PlayerDeadlockOut(BaseModel):
+    rank: DeadlockRankOut | None
+    win_loss: WinLossOut
+    streak: StreakOut
+    # Last 10 ranked games; `task` is always null here.
+    matches: list[DeadlockMatchOut]
+
+
+class PlayerProfileOut(BaseModel):
+    discord_id: int
+    discord_username: str | None
+    is_you: bool
+    league: PlayerLeagueOut | None
+    deadlock: PlayerDeadlockOut | None
+    opted_into_severity: bool
+    pity_mode: Literal["shared", "separate"]
+    odds: list[PlayerOddsOut]
+    pending_tasks: list[PlayerTaskOut]
+    task_completion_rate: float

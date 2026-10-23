@@ -6,6 +6,9 @@ interface AuthState {
   loading: boolean;
   /** Re-runs the initial /me check, e.g. right after logging out. */
   refresh: () => void;
+  /** Updates fields of the loaded /me in place (no reload or loading
+   * flash) after a settings change the server already confirmed. */
+  patchUser: (patch: Partial<Me>) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -44,9 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [nonce]);
 
   const refresh = () => setNonce((n) => n + 1);
+  const patchUser = (patch: Partial<Me>) => setUser((current) => (current ? { ...current, ...patch } : current));
 
   return (
-    <AuthContext.Provider value={{ user, loading, refresh }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, refresh, patchUser }}>{children}</AuthContext.Provider>
   );
 }
 

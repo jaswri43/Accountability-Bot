@@ -60,6 +60,8 @@ export interface Me {
   deadlock_account_id: number | null;
   deadlock_persona_name: string | null;
   pity_mode: PityMode;
+  // Hidden from other players on the Players tab (/hideprofile).
+  profile_hidden: boolean;
 }
 
 export interface RankQueue {
@@ -166,4 +168,67 @@ export interface DeadlockMatch {
   rank_after: string | null;
   backfilled: boolean;
   task: MatchTask | null;
+}
+
+// --- Other players (GET /players, GET /players/{id}) ---------------------------
+// Read-only, and deliberately narrower than the caller's own types: no Steam
+// account id, raw pity, task ids, task templates, or completed-task history.
+
+export interface PlayerSummary {
+  discord_id: number;
+  // Null until the bot has seen this user's Discord name.
+  discord_username: string | null;
+  is_you: boolean;
+  games: Game[];
+  riot_id: string | null;
+  league_rank: string | null;
+  deadlock_rank: string | null;
+  pending_count: number;
+  task_completion_rate: number;
+}
+
+export interface PlayerOdds {
+  meter: PityMeterName;
+  // Whole percentages, e.g. { low: 47, medium: 33, high: 20 }.
+  odds_percent: Odds;
+}
+
+export interface PlayerTask {
+  description: string;
+  tier: Tier | null;
+  game: Game;
+  assigned_at: string;
+}
+
+/** The League stats a profile shares -- a subset of StatsOverview. */
+export type LeagueStats = Pick<
+  StatsOverview,
+  "solo_rank" | "flex_rank" | "win_loss_overall" | "win_loss_solo" | "win_loss_flex" | "streak"
+>;
+
+export interface PlayerLeague extends LeagueStats {
+  riot_id: string;
+  // task is always null here.
+  matches: Match[];
+}
+
+/** The Deadlock stats a profile shares -- a subset of DeadlockOverview. */
+export type DeadlockStats = Pick<DeadlockOverview, "rank" | "win_loss" | "streak">;
+
+export interface PlayerDeadlock extends DeadlockStats {
+  // task is always null here.
+  matches: DeadlockMatch[];
+}
+
+export interface PlayerProfile {
+  discord_id: number;
+  discord_username: string | null;
+  is_you: boolean;
+  league: PlayerLeague | null;
+  deadlock: PlayerDeadlock | null;
+  opted_into_severity: boolean;
+  pity_mode: PityMode;
+  odds: PlayerOdds[];
+  pending_tasks: PlayerTask[];
+  task_completion_rate: number;
 }

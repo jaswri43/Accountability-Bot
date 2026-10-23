@@ -64,25 +64,26 @@ def _rank_out(db_user: User | None, queue: str, trend: list[int]) -> RankQueueOu
     return RankQueueOut(tier=tier, rank=rank, lp=lp, formatted=format_rank(entry), trend=trend)
 
 
-@router.get("/stats/overview", response_model=StatsOverviewOut)
-async def get_stats_overview(user: CurrentUser = Depends(get_current_user)):
-    async with async_session() as session:
-        db_user = await session.get(User, user.discord_id)
+async def stats_overview_for(session, discord_id: int) -> StatsOverviewOut:
+    """League rank/W-L/streak plus task stats for any user -- the caller's
+    own via GET /stats/overview, or another player's via routes/players.py
+    (which only passes on the fields a profile may show)."""
+    db_user = await session.get(User, discord_id)
 
-        ranked_result = await session.execute(
-            select(ProcessedMatch).where(
-                ProcessedMatch.discord_id == user.discord_id,
-                ProcessedMatch.queue_id.in_(RANKED_QUEUE_IDS),
-            )
+    ranked_result = await session.execute(
+        select(ProcessedMatch).where(
+            ProcessedMatch.discord_id == discord_id,
+            ProcessedMatch.queue_id.in_(RANKED_QUEUE_IDS),
         )
-        ranked_matches = ranked_result.scalars().all()
-        solo_matches = [m for m in ranked_matches if m.queue_id == RANKED_SOLO_QUEUE_ID]
-        flex_matches = [m for m in ranked_matches if m.queue_id == RANKED_FLEX_QUEUE_ID]
+    )
+    ranked_matches = ranked_result.scalars().all()
+    solo_matches = [m for m in ranked_matches if m.queue_id == RANKED_SOLO_QUEUE_ID]
+    flex_matches = [m for m in ranked_matches if m.queue_id == RANKED_FLEX_QUEUE_ID]
 
-        direction, count = current_streak(sort_matches_recent_first(ranked_matches))
+    direction, count = current_streak(sort_matches_recent_first(ranked_matches))
 
-        tasks_result = await session.execute(select(Task).where(Task.discord_id == user.discord_id))
-        all_tasks = tasks_result.scalars().all()
+    tasks_result = await session.execute(select(Task).where(Task.discord_id == discord_id))
+    all_tasks = tasks_result.scalars().all()
 
     return StatsOverviewOut(
         solo_rank=_rank_out(db_user, "solo", _lp_trend(ranked_matches, RANKED_SOLO_QUEUE_ID)),
@@ -97,34 +98,46 @@ async def get_stats_overview(user: CurrentUser = Depends(get_current_user)):
     )
 
 
+async def league_matches_for(session, discord_id: int, limit: int, include_tasks: bool = True) -> list[MatchOut]:
+    """The newest `limit` ranked League games. include_tasks=False leaves
+    out the linked task (another player's profile must not expose task
+    descriptions or completed-task history)."""
+    result = await session.execute(
+        select(ProcessedMatch).where(
+            ProcessedMatch.discord_id == discord_id,
+            ProcessedMatch.game == GAME_LEAGUE,
+            ProcessedMatch.queue_id.in_(RANKED_QUEUE_IDS),
+        )
+    )
+    matches = sort_matches_recent_first(result.scalars().all())[:limit]
+    tasks_by_id = await _linked_tasks(session, matches) if include_tasks else {}
+
+    return [
+        MatchOut(
+            match_id=m.match_id,
+            queue=QUEUE_ID_LABELS.get(m.queue_id, "Ranked"),
+            was_loss=m.was_loss,
+            champion=m.champion,
+            kills=m.kills,
+            deaths=m.deaths,
+            assists=m.assists,
+            started_at=m.started_at,
+            detected_at=m.detected_at,
+            backfilled=bool(m.backfilled),
+            task=_match_task_out(tasks_by_id, m),
+        )
+        for m in matches
+    ]
+
+
+@router.get("/stats/overview", response_model=StatsOverviewOut)
+async def get_stats_overview(user: CurrentUser = Depends(get_current_user)):
+    async with async_session() as session:
+        return await stats_overview_for(session, user.discord_id)
+
+
 @router.get("/matches", response_model=list[MatchOut])
 async def list_matches(limit: int = 10, user: CurrentUser = Depends(get_current_user)):
     limit = max(1, min(limit, 50))
-
     async with async_session() as session:
-        result = await session.execute(
-            select(ProcessedMatch).where(
-                ProcessedMatch.discord_id == user.discord_id,
-                ProcessedMatch.game == GAME_LEAGUE,
-                ProcessedMatch.queue_id.in_(RANKED_QUEUE_IDS),
-            )
-        )
-        matches = sort_matches_recent_first(result.scalars().all())[:limit]
-        tasks_by_id = await _linked_tasks(session, matches)
-
-        return [
-            MatchOut(
-                match_id=m.match_id,
-                queue=QUEUE_ID_LABELS.get(m.queue_id, "Ranked"),
-                was_loss=m.was_loss,
-                champion=m.champion,
-                kills=m.kills,
-                deaths=m.deaths,
-                assists=m.assists,
-                started_at=m.started_at,
-                detected_at=m.detected_at,
-                backfilled=bool(m.backfilled),
-                task=_match_task_out(tasks_by_id, m),
-            )
-            for m in matches
-        ]
+        return await league_matches_for(session, user.discord_id, limit)

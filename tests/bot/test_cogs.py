@@ -8,8 +8,8 @@ from discord.ext import commands
 from cogs import ALL_COGS
 
 EXPECTED_COMMANDS = {
-    "addtask", "done", "help", "mute", "mytasks", "ping", "pitymode", "register", "register-deadlock",
-    "removetask", "stats", "status", "unmute",
+    "addtask", "done", "help", "hideprofile", "mute", "mytasks", "ping", "pitymode", "register",
+    "register-deadlock", "removetask", "stats", "status", "unmute",
 }
 
 

@@ -20,6 +20,7 @@ from cogs import ALL_COGS
 from db import init_db
 from deadlock_polling import start_deadlock_polling
 from polling import start_polling
+from profiles import refresh_usernames
 from reminders import start_reminders
 from views import TaskCompletionView
 
@@ -91,6 +92,12 @@ async def on_ready():
     # ever posted (not just ones from this process run) -- without this,
     # buttons on messages from before a restart stop responding entirely.
     bot.add_view(TaskCompletionView())
+
+    # Non-fatal: names are only for other players' view of the dashboard.
+    try:
+        await refresh_usernames(bot)
+    except Exception:
+        log.exception("Couldn't refresh Discord usernames; continuing")
 
 
 def main():

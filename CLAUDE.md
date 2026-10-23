@@ -20,7 +20,7 @@ Production runs on an Oracle Cloud VM. Bot and API are systemd services, and ngi
 |---|---|
 | Bot entry point: logging, adds the cogs (`setup_hook`), syncs commands, starts the loops, persistent-view registration | `bot/main.py` |
 | Slash commands, one cog per area: `/ping` `/help` | `bot/cogs/general.py` |
-| `/register`, `/register-deadlock`, `/pitymode`, `/mute`, `/unmute` | `bot/cogs/accounts.py` |
+| `/register`, `/register-deadlock`, `/pitymode`, `/mute`, `/unmute`, `/hideprofile` | `bot/cogs/accounts.py` |
 | `/done`, `/addtask`, `/mytasks`, `/removetask`, `/status`, `/stats` | `bot/cogs/tasks.py` |
 | Cog registry (`ALL_COGS`) and cog-shared bits (`odds_text`, `REGISTER_FIRST`) | `bot/cogs/__init__.py`, `bot/cogs/common.py` |
 | League polling loop (5 min), rank tracking | `bot/polling.py` |
@@ -29,6 +29,7 @@ Production runs on an Oracle Cloud VM. Bot and API are systemd services, and ngi
 | The numbered lists in display order: `pending_tasks`, `active_templates` | `bot/task_lists.py` |
 | Deadlock polling loop (15 min), `process_deadlock_history` | `bot/deadlock_polling.py` |
 | Pity meters, odds, tier draw, pity-mode switching | `bot/severity.py` |
+| Profile visibility (`set_profile_hidden`, `visible_users`, `get_visible_user`) and stored Discord usernames (`remember_username`, `refresh_usernames` on bot start) | `bot/profiles.py` |
 | Picking a task from the user's templates (`pick_task_for_user`, `DEFAULT_TASK_DESCRIPTION`) | `bot/accountability.py` |
 | SQLAlchemy models, `init_db()`, migrations, `complete_task()`, `as_utc()` | `bot/db.py` |
 | Persistent "Mark Done" button (`TaskCompletionView`) | `bot/views.py` |
@@ -41,21 +42,25 @@ Production runs on an Oracle Cloud VM. Bot and API are systemd services, and ngi
 | Display numbering and tier/date sorting | `bot/cosmetic.py` |
 | Loss-message wording and embed colors (severity tier if opted in, else losing streak) | `bot/tone.py` |
 | API app, CORS, lifespan (`init_db`) | `api/main.py` |
-| `/auth/login`, `/auth/callback`, `/auth/logout`, `get_current_user` | `api/auth.py` |
+| `/auth/login`, `/auth/callback` (also stores the Discord username), `/auth/logout`, `get_current_user` | `api/auth.py` |
 | Combined data router (`from routes import router`) | `api/routes/__init__.py` |
 | `/tasks`, `/tasks/{id}/complete`, `/task-templates` | `api/routes/tasks.py` |
-| `/status`, `/pity-mode`, `/me`, `/pity-history` | `api/routes/account.py` |
-| `/stats/overview`, `/matches` (League) | `api/routes/league.py` |
-| `/deadlock/overview`, `/deadlock/matches` | `api/routes/deadlock.py` |
+| `/status`, `/pity-mode`, `/profile-visibility`, `/me`, `/pity-history` | `api/routes/account.py` |
+| `/stats/overview`, `/matches` (League); `stats_overview_for` / `league_matches_for` take any user | `api/routes/league.py` |
+| `/deadlock/overview`, `/deadlock/matches`; `deadlock_overview_for` / `deadlock_matches_for` take any user | `api/routes/deadlock.py` |
+| `GET /players`, `GET /players/{id}`: read-only views of other users' visible profiles | `api/routes/players.py` |
 | Match-feed helpers shared by league/deadlock routes | `api/routes/common.py` |
 | The only place `api/` imports bot code | `api/bot_bridge.py` |
-| Pydantic models | `api/schemas.py`, mirrored by hand in `web/src/api/types.ts` |
+| Pydantic models (the `Player*Out` models are the only shapes other users' data may take) | `api/schemas.py`, mirrored by hand in `web/src/api/types.ts` |
 | Fetch wrapper and endpoint calls | `web/src/api/client.ts` |
-| Auth gate (`GET /me` on mount) | `web/src/context/AuthContext.tsx` |
-| Routes: `/` Dashboard, `/history`, `/templates` | `web/src/App.tsx` |
-| Dashboard tabs (kept in `?tab=`) | `web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/{OverviewTab,LeagueTab,DeadlockTab}.tsx` |
+| Auth gate (`GET /me` on mount; `patchUser` for in-place settings updates) | `web/src/context/AuthContext.tsx` |
+| Routes: `/` Dashboard, `/history`, `/templates`, `/players`, `/players/:discordId` | `web/src/App.tsx` |
+| Dashboard tabs (kept in `?tab=`; tab list in `web/src/lib/tabs.ts`, pill switcher `components/TabBar.tsx`) | `web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/{OverviewTab,LeagueTab,DeadlockTab}.tsx` |
+| Game-tab layouts from loaded data (`LeagueStatsView`, `DeadlockStatsView`), shared by your own tabs and player profiles | `web/src/pages/dashboard/LeagueTab.tsx`, `DeadlockTab.tsx` |
+| Players tab (cards) and read-only player profile | `web/src/pages/Players.tsx`, `web/src/pages/PlayerProfile.tsx` |
+| Settings cards on Overview: pity mode, profile visibility | `web/src/components/PityModeCard.tsx`, `ProfileVisibilityCard.tsx` |
 | History and task-template pages | `web/src/pages/History.tsx`, `web/src/pages/Templates.tsx` |
-| Tier labels/colors and UTC-safe date formatting; game labels | `web/src/lib/tier.ts`, `web/src/lib/game.ts` |
+| Tier labels/colors and UTC-safe date formatting; game labels, `playerName` | `web/src/lib/tier.ts`, `web/src/lib/game.ts` |
 | 60 s refresh while the tab is visible | `web/src/lib/useAutoRefresh.ts` |
 
 ## Shared functions: reuse, never duplicate
@@ -71,6 +76,8 @@ Bot commands and API routes must call the same functions, so behavior stays iden
 - **Numbered lists:** `pending_tasks` and `active_templates` in `bot/task_lists.py`. Anything that shows or resolves a task or template `#N` must use these, so the numbers agree everywhere. (`/done` keeps its own date-ordered query only to find the most recent task.)
 - **Display numbering:** `number_items`, `resolve_cosmetic_number`, and `sort_by_tier_then_date` in `bot/cosmetic.py`. User-facing `#N` numbers are positions in a list, never DB IDs.
 - **Naive vs aware datetimes:** `as_utc` in `bot/db.py`.
+- **Profile visibility:** `set_profile_hidden(session, user, hidden)` in `bot/profiles.py` is the only way to change it; `/hideprofile` and `PUT /profile-visibility` both call it. Use `visible_users` / `get_visible_user` for anything that shows another user, never a raw `User` query.
+- **Per-user data for profiles:** `stats_overview_for`, `league_matches_for`, `deadlock_overview_for`, `deadlock_matches_for` in `api/routes/`. They serve both the caller's own endpoints and `routes/players.py`; pass `include_tasks=False` for another user.
 - **Stats:** the functions in `bot/stats.py` (`current_streak`, `win_loss_record`, `task_completion_rate`, `tier_breakdown`, `tasks_completed_by_day`, ...).
 
 ## Domain rules
@@ -92,10 +99,11 @@ Bot commands and API routes must call the same functions, so behavior stays iden
 - **Backfilled matches** (`processed_matches.backfilled = 1`, from `bot/backfill.py`) count toward the dashboard's W/L record and streak. They **never** affect pity or `pity_history`, never create tasks, and never post to Discord. Backfill only claims matches that started before the account's link time (`registered_at` / `deadlock_linked_at`); anything newer belongs to polling. `/register` commits the account and its backfilled rows in one transaction.
 - **Deadlock cutoff.** Polling only processes matches that started after `deadlock_linked_at`.
 - **Mute.** `/mute` stops both games' polling and the reminders for that user.
-- **Privacy.**
-  - Every API route is scoped to the caller via `get_current_user`, and nothing currently exposes another user's data.
-  - Any future cross-user feature (profiles, leaderboards) must never expose a user's Steam/Deadlock account ID or raw pity value.
-  - At most it may show derived, non-identifying data, such as a rank or a persona name.
+- **Privacy and profile visibility.**
+  - Every route except `routes/players.py` is scoped to the caller via `get_current_user`. There is no cross-user write path: writes to tasks and templates check ownership and return 404 otherwise, and `/players` is GET-only.
+  - `users.profile_hidden` (default false) hides a user everywhere other players could see them. Hidden users are left out of `GET /players`, and `GET /players/{id}` returns 404 for them, identical to a nonexistent user. That includes the hidden user looking at their own profile; their own Dashboard is unaffected.
+  - A profile may show: Discord username (`users.discord_username`, kept current by `bot/profiles.py`); Riot ID and League ranks/W-L/streak; Deadlock rank/W-L/streak; the last 10 ranked games per game (`task` always null); odds as whole percentages per meter of their pity mode; pending tasks (description, tier, game, assigned date); and completion rate.
+  - A profile must never show the Steam/Deadlock account ID or persona name, raw pity, task IDs, task templates, or completed-task history. This is enforced by the separate `Player*Out` schemas: add a field there only if it fits these rules, and extend `tests/api/test_players.py`.
 - **Ownership.** `processed_matches` has the primary key `(game, match_id, discord_id)`, so League and Deadlock IDs can never collide. `tasks.game` records which game triggered a task, and `pity_history.meter` records which meter a point belongs to.
 
 ## Commands
@@ -128,9 +136,7 @@ pytest tests/bot/test_severity.py     # one file
 pytest -k remake                      # by name
 ```
 
-**Python suite layout.** Tests live in `tests/`, mirroring the source (`tests/bot/`, `tests/api/`).
-- `pyproject.toml` puts `bot/`, `api/` and `tests/` on `sys.path`, so tests use the same bare imports as the app.
-- Shared row builders and queries are in `tests/helpers.py`; Riot match payloads are in `tests/league_fixtures.py`.
+**Python suite layout.** Tests live in `tests/`, mirroring the source (`tests/bot/`, `tests/api/`). `pyproject.toml` puts `bot/`, `api/` and `tests/` on `sys.path`, so tests use the app's bare imports. Shared row builders are in `tests/helpers.py`; Riot match payloads are in `tests/league_fixtures.py`.
 
 **Test database.** Any test that touches the DB takes the `test_db` fixture (`tests/conftest.py`).
 - It repoints `db.engine` and `db.async_session` at a fresh temp SQLite file built by the real `init_db()`.
@@ -138,7 +144,7 @@ pytest -k remake                      # by name
 - External APIs are mocked by monkeypatching the name in the module that uses it, e.g. `polling.get_match_details` or `deadlock_polling.get_hero_name`.
 - Discord is replaced by `FakeBot`, whose `get_channel` returns `None`: the task is created and the post is skipped.
 
-**API tests.** These build a FastAPI app from the real routers and call it with `TestClient` and a Bearer JWT from `auth._create_session_jwt`. `tests/api/test_players.py` is skipped: it's the privacy contract for the planned `/players` profiles. Remove its skip marker when that endpoint lands.
+**API tests.** These build a FastAPI app from the real routers and call it with `TestClient` and a Bearer JWT from `auth._create_session_jwt`. `tests/api/test_players.py` is the profile privacy contract (visibility, no leaks, no write path).
 
 **Lint target.** ruff targets py310 on purpose, so it won't suggest `datetime.UTC`; keep using `timezone.utc`.
 
@@ -169,10 +175,7 @@ SSH details are in the user's memory, not in this repo. The repo lives at `~/lol
 - Bot: `DISCORD_TOKEN`, `GUILD_ID` (instant command sync in dev), `RIOT_API_KEY` (dev keys expire every 24 h), `ANNOUNCE_CHANNEL_ID` (polling won't start without it).
 - API: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URI`, `FRONTEND_URL`, `JWT_SECRET`, `COOKIE_SECURE`, `API_PORT` (default 8001).
   - `DISCORD_REDIRECT_URI` is the frontend-proxied `.../api/auth/callback`, not the API's own port, and it must exactly match the redirect registered with Discord.
-- Optional:
-  - `DEADLOCK_API_KEY`: sent as `X-API-KEY`.
-  - `STEAM_WEB_API_KEY`: lets users link with a `steamcommunity.com/id/` URL.
-  - `SSL_CERT_FILE`: dev PC only, used by `api/auth.py` for Norton's HTTPS interception.
+- Optional: `DEADLOCK_API_KEY` (sent as `X-API-KEY`), `STEAM_WEB_API_KEY` (lets users link with a `steamcommunity.com/id/` URL), `SSL_CERT_FILE` (dev PC only, for Norton's HTTPS interception: `api/auth.py`, and pass it to pip/git/gh too).
 
 **Schema changes (`bot/db.py`).** There are no migration files. Both processes call `init_db()` on startup, and whichever starts first migrates.
 - **New column:** add it to the model and add an `_add_column_if_missing` call in `init_db()`. That runs `ALTER TABLE`.
@@ -191,7 +194,5 @@ SSH details are in the user's memory, not in this repo. The repo lives at `~/lol
 - The bot uses only default (non-privileged) intents, because there are no prefix commands or message reading.
 
 **Frontend.**
-- The palette is "Charcoal & Dusty Blue": Tailwind v4 `@theme` tokens in `web/src/index.css`, e.g. `--color-hero` #18181b, `--color-accent` #5b7fa6, `--color-page` #fafaf9, and the warm `--color-tier-{low,medium,high}*` tokens.
-- In match feeds a win is dusty blue and a loss is charcoal.
-- Use the tokens instead of raw hex.
+- The palette is "Charcoal & Dusty Blue": Tailwind v4 `@theme` tokens in `web/src/index.css` (`--color-hero` #18181b, `--color-accent` #5b7fa6, `--color-page` #fafaf9, warm `--color-tier-{low,medium,high}*`). Use the tokens, not raw hex. In match feeds a win is dusty blue and a loss is charcoal.
 - The frontend always calls relative `/api/...` paths, which keeps the session cookie same-origin in both dev and prod.

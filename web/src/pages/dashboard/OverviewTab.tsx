@@ -16,17 +16,17 @@ const EMPTY_TIER_BREAKDOWN: Record<Tier, TierStat> = {
 };
 
 /** Game-agnostic view: tasks from both games together, task stats, and
- * (passed in from Dashboard) the pity mode setting + shared-mode pity. */
+ * (passed in from Dashboard) the settings cards + shared-mode pity. */
 export function OverviewTab({
   status,
   onTasksChanged,
-  pityModeCard,
+  settings,
   pitySection,
 }: {
   status: StatusResponse | null;
   // Completing a task changes /status's pending_count -- Dashboard owns that.
   onTasksChanged: () => void;
-  pityModeCard: ReactNode;
+  settings: ReactNode;
   pitySection: ReactNode;
 }) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
@@ -86,7 +86,7 @@ export function OverviewTab({
         <StatTile label="Tasks assigned" value={totalAssigned ?? "—"} hint="All games, all time" />
       </div>
 
-      {pityModeCard}
+      {settings}
       {pitySection}
 
       {/* Pending tasks */}

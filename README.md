@@ -11,6 +11,28 @@ Done** button on the task message.
 **Live**, running unattended on an Oracle Cloud VM under systemd (see
 Deployment below).
 
+Phase 17: read-only player profiles.
+
+- **Players tab** (`web/src/pages/Players.tsx`, `PlayerProfile.tsx`): cards for
+  everyone who hasn't hidden their profile; a card opens that player's
+  profile in the same Overview / League / Deadlock layout as your own
+  dashboard, with no buttons or settings.
+- **API**: `GET /players` (summaries) and `GET /players/{id}` (Riot ID and
+  League ranks, Deadlock rank, last 10 ranked games per game, odds as whole
+  percentages per pity meter, pending tasks, completion rate) in
+  `api/routes/players.py`. Never included: Steam account id or persona
+  name, raw pity, task ids, task templates, completed-task history, or the
+  task linked to a match. GET only; hidden and nonexistent users are the
+  same 404.
+- **Hiding**: `users.profile_hidden` (default visible), toggled by
+  `/hideprofile` in Discord or the Profile visibility card on the
+  dashboard's Overview tab -- both call `bot/profiles.py`'s
+  `set_profile_hidden`.
+- **Names**: new `users.discord_username`, since the bot previously only
+  stored Discord ids. Set at login, by `/register`, `/register-deadlock` and
+  `/hideprofile`, and refreshed for every user each time the bot starts.
+- Both columns are added automatically by `init_db()` on first start.
+
 Phase 16: match history backfill + a "last 10 ranked games" feed.
 
 - **Backfill** (`bot/backfill.py`): stores a user's last 10 ranked games per
@@ -600,6 +622,7 @@ lol-accountability-bot/
 │   ├── loss_flow.py         # loss/win handling shared by both polling loops: task + pity draw, win pity, loss streak, loss embed
 │   ├── reminders.py         # pending-task reminder loop
 │   ├── task_lists.py        # pending tasks / active templates in display order (what every #N refers to)
+│   ├── profiles.py          # profile visibility (set_profile_hidden, visible users) + stored Discord usernames
 │   ├── deadlock_polling.py  # separate Deadlock match-polling loop (ranked only, cutoff at link time)
 │   ├── backfill.py          # last-10-ranked-games history backfill (no pity/tasks/Discord), used by /register* and scripts/
 │   ├── ranked.py            # tier/rank comparison + formatting (LP delta, promotion/demotion detection)
@@ -613,7 +636,7 @@ lol-accountability-bot/
 │   ├── main.py             # entry point, FastAPI app, CORS, routers, lifespan (init_db)
 │   ├── bot_bridge.py        # puts bot/ on sys.path and re-exports the bot code the API uses -- nothing duplicated
 │   ├── auth.py              # Discord OAuth2 login/callback + JWT issuing/validation (get_current_user dependency)
-│   ├── routes/              # tasks.py (/tasks, /task-templates), account.py (/status, /pity-mode, /me, /pity-history), league.py (/stats/overview, /matches), deadlock.py (/deadlock/*) -- all scoped to the caller
+│   ├── routes/              # tasks.py (/tasks, /task-templates), account.py (/status, /pity-mode, /me, /pity-history), league.py (/stats/overview, /matches), deadlock.py (/deadlock/*) -- all scoped to the caller; players.py (/players*) is the read-only view of other users' visible profiles
 │   ├── schemas.py           # Pydantic request/response models
 │   └── logs/                 # rotating log files, created on first run (gitignored)
 ├── web/
@@ -621,7 +644,7 @@ lol-accountability-bot/
 │   │   ├── api/               # client.ts (fetch wrapper + endpoint calls) + types.ts (mirrors api/schemas.py)
 │   │   ├── context/            # AuthContext.tsx -- calls GET /me on mount, gates the whole app
 │   │   ├── components/         # Layout.tsx (nav), HeroOddsCard/OddsChart, PitySection, PityModeCard, RankCard, DeadlockRankCard, StatTile, TierBreakdownCard, ActivityChart, MatchHistoryFeed, DeadlockMatchFeed, PityHistoryChart, Sparkline, TierBadge, GameBadge, LinkGamePrompt
-│   │   ├── pages/               # Login.tsx, Dashboard.tsx (tab container) + dashboard/ (OverviewTab, LeagueTab, DeadlockTab), History.tsx, Templates.tsx
+│   │   ├── pages/               # Login.tsx, Dashboard.tsx (tab container) + dashboard/ (OverviewTab, LeagueTab, DeadlockTab), History.tsx, Templates.tsx, Players.tsx, PlayerProfile.tsx
 │   │   ├── lib/                 # tier.ts (tier labels/colors + UTC-safe date formatting), game.ts (game labels, streak text), useAutoRefresh.ts
 │   │   ├── index.css            # Tailwind v4 @theme block -- the "Charcoal & Dusty Blue" palette tokens
 │   │   └── App.tsx              # auth gate + react-router routes

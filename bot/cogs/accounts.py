@@ -1,5 +1,5 @@
 """Linking game accounts (/register, /register-deadlock) and per-user
-settings (/pitymode, /mute, /unmute)."""
+settings (/pitymode, /mute, /unmute, /hideprofile)."""
 
 import logging
 from datetime import datetime, timezone
@@ -13,6 +13,7 @@ from backfill import fetch_league_games, league_ids_with_details, select_deadloc
 from cogs.common import REGISTER_FIRST, odds_text
 from db import GAME_DEADLOCK, GAME_LEAGUE, User, async_session
 from deadlock_api import DeadlockAPIError, format_badge, get_match_history, get_rank, get_steam_persona_name
+from profiles import remember_username, set_profile_hidden
 from riot_api import RiotAPIError, get_account_by_riot_id
 from severity import PITY_MODE_SEPARATE, set_pity_mode
 from steam_ids import SteamIdError, parse_steam_input, resolve_vanity_name, vanity_lookup_available
@@ -76,6 +77,7 @@ class AccountCommands(commands.Cog):
             user.riot_puuid = account["puuid"]
             user.riot_game_name = account["gameName"]
             user.riot_tag_line = account["tagLine"]
+            remember_username(user, interaction.user.name)
 
             # claim_before=None: nothing has been polled for this account yet,
             # so every one of its recent games is pre-registration history.
@@ -164,6 +166,7 @@ class AccountCommands(commands.Cog):
                 user.deadlock_linked_at = datetime.now(timezone.utc)
             user.deadlock_account_id = account_id
             user.deadlock_persona_name = persona_name
+            remember_username(user, interaction.user.name)
             if badge is not None:
                 user.deadlock_badge = badge
 
@@ -251,3 +254,31 @@ class AccountCommands(commands.Cog):
             await session.commit()
 
         await interaction.response.send_message("Unmuted -- loss tracking is back on.", ephemeral=True)
+
+    @app_commands.command(
+        name="hideprofile", description="Hide or show your profile to other players on the dashboard"
+    )
+    async def hideprofile(self, interaction: discord.Interaction):
+        async with async_session() as session:
+            user = await session.get(User, interaction.user.id)
+            if user is None:
+                await interaction.response.send_message(REGISTER_FIRST, ephemeral=True)
+                return
+
+            hidden = not user.profile_hidden
+            await set_profile_hidden(session, user, hidden)
+            remember_username(user, interaction.user.name)
+            await session.commit()
+
+        if hidden:
+            text = (
+                "Your profile is now **hidden**. Other players can't see it on the dashboard's Players tab. "
+                "Run `/hideprofile` again to show it."
+            )
+        else:
+            text = (
+                "Your profile is now **visible** to other players on the dashboard's Players tab "
+                "(ranks, recent games, odds and pending tasks -- never your Steam ID or raw pity). "
+                "Run `/hideprofile` again to hide it."
+            )
+        await interaction.response.send_message(text, ephemeral=True)

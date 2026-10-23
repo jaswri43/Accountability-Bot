@@ -27,6 +27,8 @@ import jwt
 from fastapi import APIRouter, Cookie, Header, HTTPException, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from bot_bridge import User, async_session, remember_username
+
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")
@@ -167,7 +169,16 @@ async def callback(code: str):
             raise HTTPException(400, f"Failed to fetch Discord identity: {user_resp.text}")
         discord_user = user_resp.json()
 
-    session_token = _create_session_jwt(int(discord_user["id"]), discord_user["username"])
+    discord_id = int(discord_user["id"])
+    # Keep the name other players see current. Only for already-registered
+    # users -- logging in never creates a users row.
+    async with async_session() as session:
+        db_user = await session.get(User, discord_id)
+        if db_user is not None:
+            remember_username(db_user, discord_user["username"])
+            await session.commit()
+
+    session_token = _create_session_jwt(discord_id, discord_user["username"])
     response = RedirectResponse(url=FRONTEND_URL)
     _set_session_cookie(response, session_token)
     return response

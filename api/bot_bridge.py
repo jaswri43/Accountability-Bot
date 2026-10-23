@@ -30,6 +30,7 @@ from db import (
     init_db,
 )
 from deadlock_api import RANKED_MATCH_MODE, badge_image_url, format_badge
+from profiles import get_visible_user, remember_username, set_profile_hidden, visible_users
 from ranked import format_rank
 from riot_api import QUEUE_ID_LABELS, RANKED_FLEX_QUEUE_ID, RANKED_QUEUE_IDS, RANKED_SOLO_QUEUE_ID
 from severity import active_meters, compute_odds, get_pity, has_opted_into_severity, set_pity_mode
@@ -41,7 +42,7 @@ from stats import (
     tier_breakdown,
     win_loss_record,
 )
-from task_lists import active_templates
+from task_lists import active_templates, pending_tasks
 
 __all__ = [
     "GAME_DEADLOCK",
@@ -65,6 +66,11 @@ __all__ = [
     "number_items",
     "sort_by_tier_then_date",
     "active_templates",
+    "pending_tasks",
+    "get_visible_user",
+    "remember_username",
+    "set_profile_hidden",
+    "visible_users",
     "format_rank",
     "QUEUE_ID_LABELS",
     "RANKED_FLEX_QUEUE_ID",

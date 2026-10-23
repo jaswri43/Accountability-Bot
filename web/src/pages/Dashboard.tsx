@@ -1,40 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Game, PityHistoryPoint, PityMeterName, PityMode, StatusResponse } from "../api/types";
+import type { PityHistoryPoint, PityMeterName, PityMode, StatusResponse } from "../api/types";
 import { useAuth } from "../context/AuthContext";
 import { GAME_LABEL } from "../lib/game";
 import { LinkGamePrompt } from "../components/LinkGamePrompt";
 import { PityModeCard } from "../components/PityModeCard";
+import { ProfileVisibilityCard } from "../components/ProfileVisibilityCard";
+import { TabBar } from "../components/TabBar";
+import { TABS, parseTab, tabParams } from "../lib/tabs";
 import { PitySection } from "../components/PitySection";
 import { DeadlockTab } from "./dashboard/DeadlockTab";
 import { ErrorBanner } from "./dashboard/ErrorBanner";
 import { LeagueTab } from "./dashboard/LeagueTab";
 import { OverviewTab } from "./dashboard/OverviewTab";
 
-type TabId = "overview" | Game;
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "league", label: "League" },
-  { id: "deadlock", label: "Deadlock" },
-];
-
-function parseTab(value: string | null): TabId {
-  return TABS.some((t) => t.id === value) ? (value as TabId) : "overview";
-}
-
 /** Tab container. Owns /status and pity history (they decide which tab
  * shows which pity meter); each tab fetches its own stats when shown. The
  * active tab lives in ?tab= so a refresh or shared link keeps it. */
 export function Dashboard() {
-  const { user } = useAuth();
+  const { user, patchUser } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseTab(searchParams.get("tab"));
 
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [pityHistory, setPityHistory] = useState<Partial<Record<PityMeterName, PityHistoryPoint[]>>>({});
   const [savingMode, setSavingMode] = useState(false);
+  const [savingVisibility, setSavingVisibility] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -66,6 +58,19 @@ export function Dashboard() {
     }
   }
 
+  async function changeVisibility(hidden: boolean) {
+    setSavingVisibility(true);
+    setError(null);
+    try {
+      const result = await api.setProfileHidden(hidden);
+      patchUser({ profile_hidden: result.hidden });
+    } catch (err) {
+      reportError(err);
+    } finally {
+      setSavingVisibility(false);
+    }
+  }
+
   const separate = status?.pity_mode === "separate";
   const optedIn = status?.opted_into_severity ?? true;
 
@@ -82,6 +87,9 @@ export function Dashboard() {
 
   const riotLinked = Boolean(user?.riot_game_name);
   const deadlockLinked = user?.deadlock_account_id != null;
+  // Visibility is a property of the users row, which only exists once a
+  // game is linked -- the API 400s the toggle before that.
+  const registered = riotLinked || deadlockLinked;
   const linkedSummary = [
     riotLinked ? `League: ${user?.riot_game_name}#${user?.riot_tag_line}` : null,
     deadlockLinked ? `Deadlock: ${user?.deadlock_persona_name ?? user?.deadlock_account_id}` : null,
@@ -100,22 +108,7 @@ export function Dashboard() {
               : "No game linked yet — use /register or /register-deadlock in Discord"}
           </p>
         </div>
-        <div className="inline-flex rounded-full border border-hairline bg-white p-1" role="tablist">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setSearchParams(t.id === "overview" ? {} : { tab: t.id })}
-              className={`rounded-full px-4 py-1.5 text-sm transition-colors ${
-                tab === t.id ? "bg-hero text-white" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <TabBar tabs={TABS} active={tab} onSelect={(id) => setSearchParams(tabParams(id))} />
       </div>
 
       {error && <ErrorBanner message={error} />}
@@ -124,8 +117,17 @@ export function Dashboard() {
         <OverviewTab
           status={status}
           onTasksChanged={() => loadStatus().catch(reportError)}
-          pityModeCard={
-            <PityModeCard mode={status?.pity_mode ?? null} saving={savingMode} onChange={changePityMode} />
+          settings={
+            <>
+              <PityModeCard mode={status?.pity_mode ?? null} saving={savingMode} onChange={changePityMode} />
+              {registered && (
+                <ProfileVisibilityCard
+                  hidden={user?.profile_hidden ?? null}
+                  saving={savingVisibility}
+                  onChange={changeVisibility}
+                />
+              )}
+            </>
           }
           pitySection={
             separate ? (

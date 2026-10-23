@@ -1,4 +1,5 @@
-"""The caller's account, pity status/mode and pity history."""
+"""The caller's account and settings (pity mode, profile visibility), pity
+status and pity history."""
 
 from typing import Literal
 
@@ -16,12 +17,15 @@ from bot_bridge import (
     get_pity,
     has_opted_into_severity,
     set_pity_mode,
+    set_profile_hidden,
 )
 from schemas import (
     MeOut,
     PityHistoryPointOut,
     PityMeterOut,
     PityModeUpdate,
+    ProfileVisibilityOut,
+    ProfileVisibilityUpdate,
     StatusOut,
 )
 
@@ -91,7 +95,21 @@ async def get_me(user: CurrentUser = Depends(get_current_user)):
         deadlock_account_id=db_user.deadlock_account_id if db_user else None,
         deadlock_persona_name=db_user.deadlock_persona_name if db_user else None,
         pity_mode=db_user.pity_mode if db_user else "shared",
+        profile_hidden=db_user.profile_hidden if db_user else False,
     )
+
+
+@router.put("/profile-visibility", response_model=ProfileVisibilityOut)
+async def update_profile_visibility(body: ProfileVisibilityUpdate, user: CurrentUser = Depends(get_current_user)):
+    """Same switch as /hideprofile in Discord -- both call
+    profiles.set_profile_hidden."""
+    async with async_session() as session:
+        db_user = await session.get(User, user.discord_id)
+        if db_user is None:
+            raise HTTPException(400, "Register with /register or /register-deadlock in Discord first.")
+        await set_profile_hidden(session, db_user, body.hidden)
+        await session.commit()
+        return ProfileVisibilityOut(hidden=db_user.profile_hidden)
 
 
 @router.get("/pity-history", response_model=list[PityHistoryPointOut])

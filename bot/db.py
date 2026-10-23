@@ -75,6 +75,14 @@ class User(Base):
     pity_mode: Mapped[str] = mapped_column(String, default="shared", server_default="shared")
     pity_league: Mapped[float | None] = mapped_column(nullable=True)
     pity_deadlock: Mapped[float | None] = mapped_column(nullable=True)
+    # Opt-out from other players viewing this user's profile on the
+    # dashboard (/players). Switch only via profiles.set_profile_hidden().
+    profile_hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Discord username, for showing this user to other players. Discord IDs
+    # are all the bot otherwise has; kept current by profiles.py (login,
+    # /register*, /hideprofile, and a refresh on every bot start). Null
+    # until first seen.
+    discord_username: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ProcessedMatch(Base):
@@ -234,6 +242,8 @@ async def init_db() -> None:
         await conn.execute(text("UPDATE tasks SET game = 'league' WHERE game IS NULL"))
         await conn.execute(text("UPDATE pity_history SET meter = 'shared' WHERE meter IS NULL"))
         await _add_column_if_missing(conn, "processed_matches", "backfilled", "BOOLEAN DEFAULT 0")
+        await _add_column_if_missing(conn, "users", "profile_hidden", "BOOLEAN DEFAULT 0")
+        await _add_column_if_missing(conn, "users", "discord_username", "VARCHAR")
 
     # Its own transaction, after the block above has committed: the
     # pre-rebuild VACUUM INTO backup can't run inside an open transaction.

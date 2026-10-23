@@ -6,6 +6,8 @@ import type {
   PityHistoryPoint,
   PityMeterName,
   PityMode,
+  PlayerProfile,
+  PlayerSummary,
   StatsOverview,
   StatusResponse,
   Task,
@@ -76,4 +78,8 @@ export const api = {
     apiFetch<StatusResponse>("/pity-mode", { method: "PUT", body: JSON.stringify({ mode }) }),
   deadlockOverview: () => apiFetch<DeadlockOverview>("/deadlock/overview"),
   deadlockMatches: (limit = 10) => apiFetch<DeadlockMatch[]>(`/deadlock/matches?limit=${limit}`),
+  setProfileHidden: (hidden: boolean) =>
+    apiFetch<{ hidden: boolean }>("/profile-visibility", { method: "PUT", body: JSON.stringify({ hidden }) }),
+  players: () => apiFetch<PlayerSummary[]>("/players"),
+  player: (discordId: number) => apiFetch<PlayerProfile>(`/players/${discordId}`),
 };

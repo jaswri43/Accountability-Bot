@@ -4,6 +4,8 @@ import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { History } from "./pages/History";
+import { PlayerProfile } from "./pages/PlayerProfile";
+import { Players } from "./pages/Players";
 import { Templates } from "./pages/Templates";
 
 function Gate() {
@@ -28,6 +30,8 @@ function Gate() {
           <Route index element={<Dashboard />} />
           <Route path="history" element={<History />} />
           <Route path="templates" element={<Templates />} />
+          <Route path="players" element={<Players />} />
+          <Route path="players/:discordId" element={<PlayerProfile />} />
         </Route>
       </Routes>
     </BrowserRouter>
