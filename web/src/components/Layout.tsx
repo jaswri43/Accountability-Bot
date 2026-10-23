@@ -23,7 +23,7 @@ export function Layout() {
             <span className="text-lg font-normal tracking-tight text-zinc-900">
               LoL Accountability
             </span>
-            <nav className="flex gap-1">
+            <nav className="flex flex-wrap gap-1">
               <NavLink to="/" end className={navLinkClass}>
                 Dashboard
               </NavLink>
@@ -32,6 +32,9 @@ export function Layout() {
               </NavLink>
               <NavLink to="/templates" className={navLinkClass}>
                 Tasks
+              </NavLink>
+              <NavLink to="/players" className={navLinkClass}>
+                Players
               </NavLink>
             </nav>
           </div>
