@@ -11,6 +11,40 @@ Done** button on the task message.
 **Live**, running unattended on an Oracle Cloud VM under systemd (see
 Deployment below).
 
+Phase 16: match history backfill + a "last 10 ranked games" feed.
+
+- **Backfill** (`bot/backfill.py`): stores a user's last 10 ranked games per
+  linked game in `processed_matches` with `backfilled = 1`. Writing the row
+  is what marks the match processed, so polling skips it; backfilled games
+  never touch pity or `pity_history`, never create a task, and never post
+  in Discord. They *do* count toward the dashboard's W/L record and streak.
+  An unstored match is only claimed if it started before the account's link
+  time (`registered_at` / `deadlock_linked_at`) -- anything newer is
+  polling's, and gets the normal pity/task flow. Rows already stored without
+  details (League's old register-time seeding, or games polled before the
+  champion/KDA columns existed) are enriched in place, linked to the task
+  polling created for them if there was one.
+- **When it runs:** `/register` fetches history *before* saving anything
+  and commits the account + backfilled rows in one transaction (replacing
+  `seed_existing_matches`), so polling can never see the account with its
+  history unmarked. `/register-deadlock` backfills from the history call it
+  already makes. For accounts linked earlier:
+  `python scripts/backfill_matches.py [--discord-id N] [--game league|deadlock|both] [--dry-run]`
+  from the repo root -- idempotent, safe alongside the live bot, prints each
+  user's pity/task/pity-history counts before and after.
+- **Rate limits:** Riot calls 1.5s apart, 429/5xx retried with exponential
+  backoff (10s doubling, 4 retries); a single match failing is stored as a
+  bare placeholder (still marked processed) rather than failing the run.
+  Deadlock waits out a backoff of up to 5 minutes, otherwise reports the
+  user as failed so a re-run can retry; entries the community API is
+  missing or has malformed are just skipped.
+- **Feed:** League and Deadlock tabs show the 10 most recent ranked games
+  (W in dusty blue, L in charcoal, champion/hero, KDA + ratio, queue or rank,
+  start time, linked task; backfilled games say "Before tracking"). Tabs
+  refresh every 60s while visible and immediately on returning to the tab
+  (`web/src/lib/useAutoRefresh.ts`). League rows now record `started_at`
+  too; older rows fall back to `detected_at`.
+
 Phase 15: dashboard split into **Overview / League / Deadlock** tabs
 (`web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/`), same Charcoal
 & Dusty Blue styling. The active tab is kept in `?tab=` so a refresh keeps it.
@@ -562,6 +596,7 @@ lol-accountability-bot/
 │   ├── steam_ids.py         # /register-deadlock input parsing: friend code, SteamID64, profile/custom URLs
 │   ├── polling.py          # background loops: League match-polling (losses -> tasks, rank tracking), task reminders, shared loss/win helpers
 │   ├── deadlock_polling.py  # separate Deadlock match-polling loop (ranked only, cutoff at link time)
+│   ├── backfill.py          # last-10-ranked-games history backfill (no pity/tasks/Discord), used by /register* and scripts/
 │   ├── ranked.py            # tier/rank comparison + formatting (LP delta, promotion/demotion detection)
 │   ├── views.py             # persistent Mark Done button (TaskCompletionView)
 │   ├── accountability.py   # picks a task per-user from task_templates (tier-aware), with a fallback default
@@ -582,13 +617,14 @@ lol-accountability-bot/
 │   │   ├── context/            # AuthContext.tsx -- calls GET /me on mount, gates the whole app
 │   │   ├── components/         # Layout.tsx (nav), HeroOddsCard/OddsChart, PitySection, PityModeCard, RankCard, DeadlockRankCard, StatTile, TierBreakdownCard, ActivityChart, MatchHistoryFeed, DeadlockMatchFeed, PityHistoryChart, Sparkline, TierBadge, GameBadge, LinkGamePrompt
 │   │   ├── pages/               # Login.tsx, Dashboard.tsx (tab container) + dashboard/ (OverviewTab, LeagueTab, DeadlockTab), History.tsx, Templates.tsx
-│   │   ├── lib/                 # tier.ts (tier labels/colors + UTC-safe date formatting), game.ts (game labels, streak text)
+│   │   ├── lib/                 # tier.ts (tier labels/colors + UTC-safe date formatting), game.ts (game labels, streak text), useAutoRefresh.ts
 │   │   ├── index.css            # Tailwind v4 @theme block -- the "Charcoal & Dusty Blue" palette tokens
 │   │   └── App.tsx              # auth gate + react-router routes
 │   ├── vite.config.ts        # dev-server proxy: /api/* -> localhost:8001, prefix stripped
 │   └── dist/                 # npm run build output -- what nginx serves in prod (gitignored)
 ├── scripts/
-│   └── simulate_deadlock_match.py        # feed a fake Deadlock match through the real polling code (testing)
+│   ├── simulate_deadlock_match.py        # feed a fake Deadlock match through the real polling code (testing)
+│   └── backfill_matches.py               # one-off/idempotent match-history backfill for existing users
 ├── deploy/
 │   ├── lol-accountability-bot.service   # systemd unit for the bot
 │   ├── lol-accountability-api.service   # systemd unit for the API

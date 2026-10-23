@@ -339,7 +339,9 @@ async def list_matches(limit: int = 10, user: CurrentUser = Depends(get_current_
                 kills=m.kills,
                 deaths=m.deaths,
                 assists=m.assists,
+                started_at=m.started_at,
                 detected_at=m.detected_at,
+                backfilled=bool(m.backfilled),
                 task=_match_task_out(tasks_by_id, m),
             )
             for m in matches
@@ -423,6 +425,7 @@ async def list_deadlock_matches(limit: int = 10, user: CurrentUser = Depends(get
                 started_at=m.started_at,
                 detected_at=m.detected_at,
                 rank_after=format_badge(m.badge_after),
+                backfilled=bool(m.backfilled),
                 task=_match_task_out(tasks_by_id, m),
             )
             for m in matches

@@ -7,7 +7,9 @@ deadlock_polling.py, built on the game-agnostic loss/win helpers here
 
 processed_matches is what makes match-polling idempotent across poll
 cycles/restarts: a (game, match_id, discord_id) triple is only ever handled
-once. Muted users (users.muted) are skipped entirely by every loop.
+once -- including rows bot/backfill.py wrote for pre-registration history,
+which is how those games stay out of the pity/task flow. Muted users
+(users.muted) are skipped entirely by every loop.
 """
 
 import logging
@@ -177,36 +179,6 @@ async def _send_reminders(bot: discord.Client, channel_id: int) -> None:
         await session.commit()
 
 
-async def seed_existing_matches(user: User) -> None:
-    """Mark a newly-registered user's current ranked match history as already
-    processed, so the polling loop won't retroactively assign tasks for games
-    played before they registered -- only losses from here on get flagged."""
-    try:
-        match_ids = await get_match_ids_by_puuid(
-            user.riot_puuid, count=MATCHES_TO_CHECK, queue_type="ranked"
-        )
-    except RiotAPIError as e:
-        log.error(f"Failed to seed match history for {user.riot_game_name}#{user.riot_tag_line}: {e}")
-        return
-
-    async with async_session() as session:
-        for match_id in match_ids:
-            already_processed = await session.get(ProcessedMatch, (GAME_LEAGUE, match_id, user.discord_id))
-            if already_processed is not None:
-                continue
-
-            try:
-                match = await get_match_details(match_id)
-            except RiotAPIError as e:
-                log.error(f"Failed to seed match {match_id}: {e}")
-                continue
-
-            was_loss = match["info"]["queueId"] in RANKED_QUEUE_IDS and did_player_lose(match, user.riot_puuid)
-            session.add(ProcessedMatch(game=GAME_LEAGUE, match_id=match_id, discord_id=user.discord_id, was_loss=was_loss))
-
-        await session.commit()
-
-
 async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
     try:
         match_ids = await get_match_ids_by_puuid(
@@ -250,6 +222,7 @@ async def _check_user(bot: discord.Client, channel_id: int, user: User) -> None:
                 kills=participant["kills"],
                 deaths=participant["deaths"],
                 assists=participant["assists"],
+                started_at=datetime.fromtimestamp(match["info"]["gameStartTimestamp"] / 1000, tz=timezone.utc),
             )
             session.add(processed_match)
 

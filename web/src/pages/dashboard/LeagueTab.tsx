@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { api, ApiError } from "../../api/client";
 import type { Match, StatsOverview, WinLoss } from "../../api/types";
 import { MatchHistoryFeed } from "../../components/MatchHistoryFeed";
 import { RankCard } from "../../components/RankCard";
 import { StatTile } from "../../components/StatTile";
 import { streakLabel } from "../../lib/game";
+import { useAutoRefresh } from "../../lib/useAutoRefresh";
 import { ErrorBanner } from "./ErrorBanner";
 
 const EMPTY_WIN_LOSS: WinLoss = { wins: 0, losses: 0, win_rate: 0 };
@@ -16,16 +17,19 @@ export function LeagueTab({ riotId, pitySection }: { riotId: string; pitySection
   const [matches, setMatches] = useState<Match[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([api.statsOverview(), api.matches(8)])
+  // Overview refreshes alongside the feed so W/L and streak stay in step
+  // with newly polled games.
+  useAutoRefresh(() => {
+    Promise.all([api.statsOverview(), api.matches(10)])
       .then(([o, m]) => {
         setOverview(o);
         setMatches(m);
+        setError(null);
       })
       .catch((err: unknown) => {
         if (err instanceof ApiError) setError(err.message);
       });
-  }, []);
+  });
 
   const record = overview?.win_loss_overall;
   const winRate = record && record.wins + record.losses > 0 ? Math.round(record.win_rate * 100) : null;

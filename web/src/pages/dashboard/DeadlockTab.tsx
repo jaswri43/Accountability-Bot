@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { api, ApiError } from "../../api/client";
 import type { DeadlockMatch, DeadlockOverview } from "../../api/types";
 import { DeadlockMatchFeed } from "../../components/DeadlockMatchFeed";
@@ -6,6 +6,7 @@ import { DeadlockRankCard } from "../../components/DeadlockRankCard";
 import { StatTile } from "../../components/StatTile";
 import { ErrorBanner } from "./ErrorBanner";
 import { streakLabel } from "../../lib/game";
+import { useAutoRefresh } from "../../lib/useAutoRefresh";
 
 /** Only rendered once the user has a Deadlock account linked -- Dashboard
  * shows LinkGamePrompt instead otherwise (/deadlock/overview 404s then). */
@@ -14,16 +15,17 @@ export function DeadlockTab({ pitySection }: { pitySection: ReactNode }) {
   const [matches, setMatches] = useState<DeadlockMatch[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([api.deadlockOverview(), api.deadlockMatches(8)])
+  useAutoRefresh(() => {
+    Promise.all([api.deadlockOverview(), api.deadlockMatches(10)])
       .then(([o, m]) => {
         setOverview(o);
         setMatches(m);
+        setError(null);
       })
       .catch((err: unknown) => {
         if (err instanceof ApiError) setError(err.message);
       });
-  }, []);
+  });
 
   const record = overview?.win_loss;
   const winRate = record && record.wins + record.losses > 0 ? Math.round(record.win_rate * 100) : null;
@@ -52,7 +54,7 @@ export function DeadlockTab({ pitySection }: { pitySection: ReactNode }) {
           hint={overview ? streakLabel(overview.streak) : undefined}
         />
         <div className="col-span-2 sm:col-span-1">
-          <StatTile label="Ranked games tracked" value={record ? record.wins + record.losses : "—"} hint="Since linking" />
+          <StatTile label="Ranked games tracked" value={record ? record.wins + record.losses : "—"} hint="Incl. pre-link history" />
         </div>
       </div>
 

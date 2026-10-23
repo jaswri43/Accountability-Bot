@@ -58,7 +58,7 @@ class User(Base):
     deadlock_account_id: Mapped[int | None] = mapped_column(unique=True, nullable=True)
     deadlock_persona_name: Mapped[str | None] = mapped_column(nullable=True)
     # Only Deadlock matches that started at/after this get processed --
-    # Deadlock's equivalent of League's seed_existing_matches (the full
+    # Deadlock's equivalent of League's register-time history seeding (the full
     # history can be thousands of matches, so a cutoff beats seeding rows).
     # Reset whenever the linked account changes.
     deadlock_linked_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -97,9 +97,10 @@ class ProcessedMatch(Base):
     # added -- NULL for older rows and for non-ranked matches (which only
     # ever got a placeholder row here to avoid reprocessing them; their
     # was_loss is meaningless, always False regardless of actual result).
-    # Never backfilled -- powers the match-history feed, per-queue win/loss
-    # record, and LP-trend sparkline, all of which are fine starting from
-    # "no data yet" and filling in as new games happen.
+    # Powers the match-history feed, per-queue win/loss record, and LP-trend
+    # sparkline. bot/backfill.py fills these in for a user's last 10 ranked
+    # games (see `backfilled` below), including older League rows that
+    # /register's history seeding stored without them.
     queue_id: Mapped[int | None] = mapped_column(nullable=True)
     # Champion name for League, hero name for Deadlock.
     champion: Mapped[str | None] = mapped_column(nullable=True)
@@ -114,11 +115,21 @@ class ProcessedMatch(Base):
     # lets the match-history feed show "here's the task this game
     # triggered" without guessing from descriptions/timestamps.
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
-    # Deadlock only: match start time (from the API -- detected_at can lag
-    # it by hours since the community API ingests matches late) and the
-    # rank badge shown after the match (null during placements).
+    # Match start time, from the game's API. Deadlock: detected_at can lag
+    # it by hours since the community API ingests matches late. League:
+    # populated for rows polled/backfilled after this was added; older rows
+    # fall back to detected_at for display.
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Deadlock only: the rank badge shown after the match (null during
+    # placements).
     badge_after: Mapped[int | None] = mapped_column(nullable=True)
+    # True for rows written by bot/backfill.py rather than the polling loop:
+    # history from before the account was linked. They count toward the
+    # dashboard's W/L record and streak like any ranked game, but never
+    # touched pity, never created a task (task_id stays NULL), and were
+    # never announced in Discord -- the row existing is what keeps polling
+    # from treating the match as new.
+    backfilled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class PityHistory(Base):
@@ -222,6 +233,7 @@ async def init_db() -> None:
         await _add_column_if_missing(conn, "pity_history", "meter", "VARCHAR DEFAULT 'shared'")
         await conn.execute(text("UPDATE tasks SET game = 'league' WHERE game IS NULL"))
         await conn.execute(text("UPDATE pity_history SET meter = 'shared' WHERE meter IS NULL"))
+        await _add_column_if_missing(conn, "processed_matches", "backfilled", "BOOLEAN DEFAULT 0")
 
     # Its own transaction, after the block above has committed: the
     # pre-rebuild VACUUM INTO backup can't run inside an open transaction.

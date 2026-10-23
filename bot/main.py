@@ -20,11 +20,12 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from sqlalchemy import select
 
+from backfill import fetch_league_games, league_ids_with_details, select_deadlock_games, store_games
 from cosmetic import number_items, resolve_cosmetic_number, sort_by_tier_then_date
 from db import GAME_DEADLOCK, GAME_LEAGUE, Task, TaskTemplate, User, async_session, complete_task, init_db
 from deadlock_api import DeadlockAPIError, format_badge, get_match_history, get_rank, get_steam_persona_name
 from deadlock_polling import start_deadlock_polling
-from polling import seed_existing_matches, start_polling, start_reminders
+from polling import start_polling, start_reminders
 from riot_api import RiotAPIError, get_account_by_riot_id
 from severity import (
     METER_SHARED,
@@ -199,6 +200,22 @@ async def register(interaction: discord.Interaction, game_name: str, tag_line: s
         )
         return
 
+    # Fetched before anything is saved: the account and its backfilled
+    # history commit together below, so the polling loop can never see this
+    # account before its existing games are marked processed (it'd treat
+    # them all as new losses). No history, no registration.
+    try:
+        recent_games = await fetch_league_games(
+            account["puuid"], await league_ids_with_details(interaction.user.id)
+        )
+    except Exception:
+        log.exception("Couldn't load match history during /register")
+        await interaction.followup.send(
+            "Couldn't load your recent ranked games from the Riot API, so nothing was saved yet. "
+            "Please try again in a moment."
+        )
+        return
+
     async with async_session() as session:
         user = await session.get(User, interaction.user.id)
         if user is None:
@@ -209,12 +226,15 @@ async def register(interaction: discord.Interaction, game_name: str, tag_line: s
         user.riot_game_name = account["gameName"]
         user.riot_tag_line = account["tagLine"]
 
+        # claim_before=None: nothing has been polled for this account yet,
+        # so every one of its recent games is pre-registration history.
+        backfill = await store_games(session, user.discord_id, GAME_LEAGUE, recent_games, claim_before=None)
         await session.commit()
 
-    await seed_existing_matches(user)
-
+    log.info(f"League backfill for {interaction.user.id}: {backfill}")
     await interaction.followup.send(
         f"You're now tracked as **{account['gameName']} #{account['tagLine']}**. "
+        "Your recent ranked games are on the dashboard (they don't count toward tasks or pity). "
         "Play Deadlock too? Link it with `/register-deadlock`."
     )
 
@@ -298,6 +318,22 @@ async def register_deadlock(interaction: discord.Interaction, account: str):
             user.deadlock_badge = badge
 
         await session.commit()
+
+    # Pre-link history for the dashboard, from the history already fetched
+    # above (no extra rate-limited call). Only matches that started before
+    # deadlock_linked_at are claimed -- polling owns everything after -- so
+    # unlike /register this is safe to do after the link is committed.
+    try:
+        recent_games = await select_deadlock_games(history)
+        async with async_session() as session:
+            backfill = await store_games(
+                session, user.discord_id, GAME_DEADLOCK, recent_games, claim_before=user.deadlock_linked_at
+            )
+            await session.commit()
+        log.info(f"Deadlock backfill for {interaction.user.id}: {backfill}")
+    except Exception:
+        # Registration already succeeded; scripts/backfill_matches.py can fill it in later.
+        log.exception(f"Deadlock backfill failed for {interaction.user.id}")
 
     name = f"**{persona_name}** (`{account_id}`)" if persona_name else f"Steam account `{account_id}`"
     rank_text = f" Current rank: **{format_badge(badge)}**." if format_badge(badge) else ""

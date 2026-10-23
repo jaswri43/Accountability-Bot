@@ -142,7 +142,12 @@ class MatchOut(BaseModel):
     kills: int | None
     deaths: int | None
     assists: int | None
+    # When the match was played; null for rows polled before this was
+    # recorded for League (fall back to detected_at).
+    started_at: datetime | None
     detected_at: datetime
+    # Pre-registration history (bot/backfill.py): never had a task or pity.
+    backfilled: bool
     task: MatchTaskOut | None
 
 
@@ -186,4 +191,5 @@ class DeadlockMatchOut(BaseModel):
     started_at: datetime | None
     detected_at: datetime
     rank_after: str | None
+    backfilled: bool
     task: MatchTaskOut | None

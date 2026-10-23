@@ -91,6 +91,11 @@ def _register_rate_limit(retry_after: str | None) -> float:
     return wait
 
 
+def backoff_remaining() -> float:
+    """Seconds left in the current rate-limit backoff (0 if none)."""
+    return max(0.0, _backoff_until - time.monotonic())
+
+
 async def _get(path: str, params: dict | None = None, *, use_429_body: bool = False):
     global _backoff_seconds
     remaining = _backoff_until - time.monotonic()

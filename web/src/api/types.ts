@@ -120,7 +120,11 @@ export interface Match {
   kills: number | null;
   deaths: number | null;
   assists: number | null;
+  // When it was played; null for older League rows (use detected_at).
+  started_at: string | null;
   detected_at: string;
+  // Pre-registration history: never triggered a task or moved pity.
+  backfilled: boolean;
   task: MatchTask | null;
 }
 
@@ -160,5 +164,6 @@ export interface DeadlockMatch {
   started_at: string | null;
   detected_at: string;
   rank_after: string | null;
+  backfilled: boolean;
   task: MatchTask | null;
 }
