@@ -34,14 +34,7 @@ from profiles import get_visible_user, remember_username, set_profile_hidden, vi
 from ranked import format_rank
 from riot_api import QUEUE_ID_LABELS, RANKED_FLEX_QUEUE_ID, RANKED_QUEUE_IDS, RANKED_SOLO_QUEUE_ID
 from severity import active_meters, compute_odds, get_pity, has_opted_into_severity, set_pity_mode
-from stats import (
-    current_streak,
-    sort_matches_recent_first,
-    task_completion_rate,
-    tasks_completed_by_day,
-    tier_breakdown,
-    win_loss_record,
-)
+from stats import current_streak, sort_matches_recent_first, win_loss_record
 from task_lists import active_templates, pending_tasks
 
 __all__ = [
@@ -78,8 +71,5 @@ __all__ = [
     "RANKED_SOLO_QUEUE_ID",
     "current_streak",
     "sort_matches_recent_first",
-    "task_completion_rate",
-    "tasks_completed_by_day",
-    "tier_breakdown",
     "win_loss_record",
 ]

@@ -134,7 +134,10 @@ def test_profile_contents(app_client):
     [task] = body["pending_tasks"]
     assert (task["description"], task["tier"], task["game"]) == ("pending public task", "high", "league")
     assert set(task) == {"description", "tier", "game", "assigned_at"}  # no task id
-    assert body["task_completion_rate"] == 0.5
+    # Task completion rate was removed from the dashboard entirely.
+    assert "task_completion_rate" not in body
+    cards = app_client.get("/players", headers=headers(VIEWER)).json()
+    assert all("task_completion_rate" not in card for card in cards)
 
 
 def test_match_feeds_never_link_tasks(app_client):

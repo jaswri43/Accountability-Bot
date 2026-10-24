@@ -1,5 +1,7 @@
 // Mirrors api/schemas.py exactly -- keep these in sync with the backend.
 
+import type { Accent, Theme } from "../lib/appearance";
+
 export type Tier = "low" | "medium" | "high";
 export type Game = "league" | "deadlock";
 export type PityMode = "shared" | "separate";
@@ -17,6 +19,7 @@ export interface Task {
   completed_at: string | null;
   // Which game's loss triggered this task.
   game: Game;
+  tier: Tier | null;
 }
 
 export interface TaskTemplate {
@@ -64,6 +67,9 @@ export interface Me {
   pity_mode: PityMode;
   // Hidden from other players on the Players tab (/hideprofile).
   profile_hidden: boolean;
+  // Dashboard appearance; dark/violet until a game is linked.
+  theme: Theme;
+  accent: Accent;
 }
 
 export interface RankQueue {
@@ -87,17 +93,6 @@ export interface Streak {
   count: number;
 }
 
-export interface TierStat {
-  count: number;
-  completed: number;
-  completion_rate: number;
-}
-
-export interface ActivityPoint {
-  date: string;
-  count: number;
-}
-
 export interface StatsOverview {
   solo_rank: RankQueue | null;
   flex_rank: RankQueue | null;
@@ -105,9 +100,6 @@ export interface StatsOverview {
   win_loss_solo: WinLoss;
   win_loss_flex: WinLoss;
   streak: Streak;
-  task_completion_rate: number;
-  tier_breakdown: Record<Tier, TierStat>;
-  activity: ActivityPoint[];
 }
 
 export interface MatchTask {
@@ -187,7 +179,6 @@ export interface PlayerSummary {
   league_rank: string | null;
   deadlock_rank: string | null;
   pending_count: number;
-  task_completion_rate: number;
 }
 
 export interface PlayerOdds {
@@ -233,5 +224,4 @@ export interface PlayerProfile {
   pity_mode: PityMode;
   odds: PlayerOdds[];
   pending_tasks: PlayerTask[];
-  task_completion_rate: number;
 }

@@ -130,3 +130,15 @@ def test_other_users_data_never_appears_in_own_responses(client):
         body = client.get(path, headers=as_user(ME)).text
         assert str(OTHER_STEAM_ID) not in body, path
         assert "42.0" not in body, path
+
+
+def test_stats_overview_has_no_task_stats(client):
+    # Completion rate, tier breakdown and the activity chart were removed from the dashboard.
+    body = client.get("/stats/overview", headers=as_user(ME)).json()
+    assert not {"task_completion_rate", "tier_breakdown", "activity"} & set(body)
+
+
+def test_tasks_include_tier(client):
+    asyncio.run(add_rows(Task(id=11, discord_id=ME, match_id="NA1_3", task_description="tagged", tier="high")))
+    tiers = {t["task_description"]: t["tier"] for t in client.get("/tasks", headers=as_user(ME)).json()}
+    assert tiers["tagged"] == "high"

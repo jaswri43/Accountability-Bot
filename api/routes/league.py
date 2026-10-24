@@ -1,4 +1,4 @@
-"""League rank, W/L, streak and task stats overview, and the League match feed."""
+"""League rank, W/L and streak overview, and the League match feed."""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -11,24 +11,18 @@ from bot_bridge import (
     RANKED_QUEUE_IDS,
     RANKED_SOLO_QUEUE_ID,
     ProcessedMatch,
-    Task,
     User,
     async_session,
     current_streak,
     format_rank,
     sort_matches_recent_first,
-    task_completion_rate,
-    tasks_completed_by_day,
-    tier_breakdown,
     win_loss_record,
 )
 from schemas import (
-    ActivityPointOut,
     MatchOut,
     RankQueueOut,
     StatsOverviewOut,
     StreakOut,
-    TierStatOut,
     WinLossOut,
 )
 
@@ -65,9 +59,8 @@ def _rank_out(db_user: User | None, queue: str, trend: list[int]) -> RankQueueOu
 
 
 async def stats_overview_for(session, discord_id: int) -> StatsOverviewOut:
-    """League rank/W-L/streak plus task stats for any user -- the caller's
-    own via GET /stats/overview, or another player's via routes/players.py
-    (which only passes on the fields a profile may show)."""
+    """League rank/W-L/streak for any user -- the caller's own via GET
+    /stats/overview, or another player's via routes/players.py."""
     db_user = await session.get(User, discord_id)
 
     ranked_result = await session.execute(
@@ -82,9 +75,6 @@ async def stats_overview_for(session, discord_id: int) -> StatsOverviewOut:
 
     direction, count = current_streak(sort_matches_recent_first(ranked_matches))
 
-    tasks_result = await session.execute(select(Task).where(Task.discord_id == discord_id))
-    all_tasks = tasks_result.scalars().all()
-
     return StatsOverviewOut(
         solo_rank=_rank_out(db_user, "solo", _lp_trend(ranked_matches, RANKED_SOLO_QUEUE_ID)),
         flex_rank=_rank_out(db_user, "flex", _lp_trend(ranked_matches, RANKED_FLEX_QUEUE_ID)),
@@ -92,9 +82,6 @@ async def stats_overview_for(session, discord_id: int) -> StatsOverviewOut:
         win_loss_solo=WinLossOut(**win_loss_record(solo_matches)),
         win_loss_flex=WinLossOut(**win_loss_record(flex_matches)),
         streak=StreakOut(direction=direction, count=count),
-        task_completion_rate=task_completion_rate(all_tasks),
-        tier_breakdown={tier: TierStatOut(**stat) for tier, stat in tier_breakdown(all_tasks).items()},
-        activity=[ActivityPointOut(**point) for point in tasks_completed_by_day(all_tasks)],
     )
 
 

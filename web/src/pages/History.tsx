@@ -1,24 +1,23 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import type { Task } from "../api/types";
-import { GameBadge } from "../components/GameBadge";
-import { formatDate } from "../lib/tier";
+import { DataTable, ErrorBanner, PageHeader, Segmented, TableMessage, Td, Th, TierTag } from "../components/ui";
+import { formatDate } from "../lib/dates";
+import { GAME_LABEL } from "../lib/game";
 
-function StatusBadge({ status }: { status: string }) {
-  const done = status === "done";
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        done ? "bg-accent-soft text-accent-strong" : "bg-zinc-100 text-zinc-500"
-      }`}
-    >
-      {done ? "Done" : "Pending"}
-    </span>
-  );
-}
+type Filter = "all" | "pending" | "done";
 
+const EMPTY_TEXT: Record<Filter, string> = {
+  all: "No tasks yet.",
+  pending: "No pending tasks.",
+  done: "No completed tasks yet.",
+};
+
+/** Every task you've been assigned, most recent first. Numbers are positions
+ * in the full list, so they stay the same under a filter. */
 export function History() {
   const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -30,66 +29,71 @@ export function History() {
       });
   }, []);
 
+  const count = (f: Filter) => (tasks ?? []).filter((t) => f === "all" || t.status === f).length;
+  const shown = tasks?.filter((t) => filter === "all" || t.status === filter) ?? null;
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-normal tracking-tight text-zinc-900">Task History</h1>
+      <PageHeader title="History" subtitle="Every task assigned after a counted loss, most recent first.">
+        <Segmented
+          label="Filter tasks"
+          value={filter}
+          onChange={setFilter}
+          options={(["all", "pending", "done"] as const).map((f) => ({
+            id: f,
+            label: (
+              <>
+                {f === "all" ? "All" : f === "pending" ? "Pending" : "Done"}{" "}
+                <span className="text-muted tabular-nums">{tasks ? count(f) : ""}</span>
+              </>
+            ),
+          }))}
+        />
+      </PageHeader>
 
-      {error && (
-        <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-600/20">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      <div className="overflow-hidden rounded-3xl border border-hairline bg-white">
-        {tasks === null ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">Loading…</p>
-        ) : tasks.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">No tasks yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-hairline">
-              <thead className="bg-zinc-50/60">
-                <tr>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    #
-                  </th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Task
-                  </th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Game
-                  </th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Status
-                  </th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Assigned
-                  </th>
-                  <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-widest text-zinc-500">
-                    Completed
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline">
-                {tasks.map((task) => (
-                  <tr key={task.id}>
-                    <td className="px-5 py-3 text-sm text-zinc-500">{task.number}</td>
-                    <td className="px-5 py-3 text-sm text-zinc-900">{task.task_description}</td>
-                    <td className="px-5 py-3">
-                      <GameBadge game={task.game} />
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge status={task.status} />
-                    </td>
-                    <td className="px-5 py-3 text-sm text-zinc-500">{formatDate(task.created_at)}</td>
-                    <td className="px-5 py-3 text-sm text-zinc-500">{formatDate(task.completed_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <DataTable minWidth="44rem">
+        <thead>
+          <tr>
+            <Th className="w-10">#</Th>
+            <Th>Task</Th>
+            <Th>Tier</Th>
+            <Th>Game</Th>
+            <Th>Assigned</Th>
+            <Th>Status</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown === null ? (
+            <TableMessage colSpan={6}>Loading…</TableMessage>
+          ) : shown.length === 0 ? (
+            <TableMessage colSpan={6}>{EMPTY_TEXT[filter]}</TableMessage>
+          ) : (
+            shown.map((task) => (
+              <tr key={task.id}>
+                <Td className="text-muted tabular-nums">{task.number}</Td>
+                <Td>{task.task_description}</Td>
+                <Td>
+                  <TierTag tier={task.tier} />
+                </Td>
+                <Td className="text-muted">{GAME_LABEL[task.game]}</Td>
+                <Td className="whitespace-nowrap text-muted">{formatDate(task.created_at)}</Td>
+                <Td className="whitespace-nowrap">
+                  {task.status === "done" ? (
+                    <>
+                      <span className="font-medium text-accent">Done</span>{" "}
+                      <span className="text-muted">{formatDate(task.completed_at)}</span>
+                    </>
+                  ) : (
+                    "Pending"
+                  )}
+                </Td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

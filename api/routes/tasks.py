@@ -35,6 +35,7 @@ def _task_out(number: int, task: Task) -> TaskOut:
         created_at=task.created_at,
         completed_at=task.completed_at,
         game=task.game,
+        tier=task.tier,
     )
 
 

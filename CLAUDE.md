@@ -38,14 +38,14 @@ Production runs on an Oracle Cloud VM. Bot and API are systemd services, and ngi
 | Steam input parsing for `/register-deadlock` | `bot/steam_ids.py` |
 | Last-10-ranked-games history backfill (`backfill_user`, `store_games`) | `bot/backfill.py` |
 | Rank compare/format, LP delta, promotion/demotion | `bot/ranked.py` |
-| Pure stats: streaks, W/L, completion rate, tier breakdown, activity | `bot/stats.py` |
+| Pure stats: match ordering, streaks, W/L | `bot/stats.py` |
 | Display numbering and tier/date sorting | `bot/cosmetic.py` |
 | Loss-message wording and embed colors (severity tier if opted in, else losing streak) | `bot/tone.py` |
 | API app, CORS, lifespan (`init_db`) | `api/main.py` |
 | `/auth/login`, `/auth/callback` (also stores the Discord username), `/auth/logout`, `get_current_user` | `api/auth.py` |
 | Combined data router (`from routes import router`) | `api/routes/__init__.py` |
 | `/tasks`, `/tasks/{id}/complete`, `/task-templates` | `api/routes/tasks.py` |
-| `/status`, `/pity-mode`, `/profile-visibility`, `/me`, `/pity-history` | `api/routes/account.py` |
+| `/status`, `/pity-mode`, `/profile-visibility`, `/me`, `PATCH /me/appearance`, `/pity-history` | `api/routes/account.py` |
 | `/stats/overview`, `/matches` (League); `stats_overview_for` / `league_matches_for` take any user | `api/routes/league.py` |
 | `/deadlock/overview`, `/deadlock/matches`; `deadlock_overview_for` / `deadlock_matches_for` take any user | `api/routes/deadlock.py` |
 | `GET /players`, `GET /players/{id}`: read-only views of other users' visible profiles | `api/routes/players.py` |
@@ -54,13 +54,17 @@ Production runs on an Oracle Cloud VM. Bot and API are systemd services, and ngi
 | Pydantic models (the `Player*Out` models are the only shapes other users' data may take) | `api/schemas.py`, mirrored by hand in `web/src/api/types.ts` |
 | Fetch wrapper and endpoint calls | `web/src/api/client.ts` |
 | Auth gate (`GET /me` on mount; `patchUser` for in-place settings updates) | `web/src/context/AuthContext.tsx` |
-| Routes: `/` Dashboard, `/history`, `/templates`, `/players`, `/players/:discordId` | `web/src/App.tsx` |
-| Dashboard tabs (kept in `?tab=`; tab list in `web/src/lib/tabs.ts`, pill switcher `components/TabBar.tsx`) | `web/src/pages/Dashboard.tsx` + `web/src/pages/dashboard/{OverviewTab,LeagueTab,DeadlockTab}.tsx` |
-| Game-tab layouts from loaded data (`LeagueStatsView`, `DeadlockStatsView`), shared by your own tabs and player profiles | `web/src/pages/dashboard/LeagueTab.tsx`, `DeadlockTab.tsx` |
-| Players tab (cards) and read-only player profile | `web/src/pages/Players.tsx`, `web/src/pages/PlayerProfile.tsx` |
-| Settings cards on Overview: pity mode, profile visibility | `web/src/components/PityModeCard.tsx`, `ProfileVisibilityCard.tsx` |
-| History and task-template pages | `web/src/pages/History.tsx`, `web/src/pages/Templates.tsx` |
-| Tier labels/colors and UTC-safe date formatting; game labels, `playerName` | `web/src/lib/tier.ts`, `web/src/lib/game.ts` |
+| Appearance: applies theme/accent, saves via `PATCH /me/appearance` once registered, else localStorage only | `web/src/context/AppearanceContext.tsx`, `web/src/lib/appearance.ts`, inline script in `web/index.html` |
+| Design tokens (CSS variables + Tailwind `@theme inline`) | `web/src/index.css` |
+| Routes: `/` Overview (old `/?tab=league` links redirect), `/league`, `/deadlock`, `/players`, `/players/:discordId`, `/templates` (the "Tasks" tab), `/history` | `web/src/App.tsx` |
+| Header with text tabs and the user menu (Appearance, Log out) | `web/src/components/Layout.tsx`, `UserMenu.tsx` |
+| Primitives: `PageHeader`, `Section`, `NumberStrip`/`Stat`, `DataTable`/`Th`/`Td`/`TableMessage`, `TierTag`, `Segmented`, `EmptyState`, `ErrorBanner` | `web/src/components/ui.tsx` |
+| Overview layout (number strip, odds, pending tasks + recent matches), shared by Overview and player profiles | `web/src/components/OverviewLayout.tsx` |
+| Odds bar, pending-tasks table, match table, pity chart, settings rows | `web/src/components/{OddsRows,PendingTasksTable,MatchTable,PityHistoryChart,SettingsSection}.tsx` |
+| Pages | `web/src/pages/{Overview,League,Deadlock,Players,PlayerProfile,Templates,History,Login}.tsx` |
+| Both games' matches as one row shape (`leagueRows`, `deadlockRows`, `mostRecent`) | `web/src/lib/matches.ts` |
+| A game page's pity meter + history (its own in separate mode, else shared) | `web/src/lib/useGamePity.ts` |
+| Game/tier labels, `isRegistered`, rank/record/streak text, `playerName`; UTC-safe date formatting | `web/src/lib/game.ts`, `web/src/lib/dates.ts` |
 | 60 s refresh while the tab is visible | `web/src/lib/useAutoRefresh.ts` |
 
 ## Shared functions: reuse, never duplicate
@@ -78,7 +82,7 @@ Bot commands and API routes must call the same functions, so behavior stays iden
 - **Naive vs aware datetimes:** `as_utc` in `bot/db.py`.
 - **Profile visibility:** `set_profile_hidden(session, user, hidden)` in `bot/profiles.py` is the only way to change it; `/hideprofile` and `PUT /profile-visibility` both call it. Use `visible_users` / `get_visible_user` for anything that shows another user, never a raw `User` query.
 - **Per-user data for profiles:** `stats_overview_for`, `league_matches_for`, `deadlock_overview_for`, `deadlock_matches_for` in `api/routes/`. They serve both the caller's own endpoints and `routes/players.py`; pass `include_tasks=False` for another user.
-- **Stats:** the functions in `bot/stats.py` (`current_streak`, `win_loss_record`, `task_completion_rate`, `tier_breakdown`, `tasks_completed_by_day`, ...).
+- **Stats:** the functions in `bot/stats.py` (`current_streak`, `win_loss_record`, `sort_matches_recent_first`, ...).
 
 ## Domain rules
 
@@ -102,7 +106,7 @@ Bot commands and API routes must call the same functions, so behavior stays iden
 - **Privacy and profile visibility.**
   - Every route except `routes/players.py` is scoped to the caller via `get_current_user`. There is no cross-user write path: writes to tasks and templates check ownership and return 404 otherwise, and `/players` is GET-only.
   - `users.profile_hidden` (default false) hides a user everywhere other players could see them. Hidden users are left out of `GET /players`, and `GET /players/{id}` returns 404 for them, identical to a nonexistent user. That includes the hidden user looking at their own profile; their own Dashboard is unaffected.
-  - A profile may show: Discord username (`users.discord_username`, kept current by `bot/profiles.py`); Riot ID and League ranks/W-L/streak; Deadlock rank/W-L/streak; the last 10 ranked games per game (`task` always null); odds as whole percentages per meter of their pity mode; pending tasks (description, tier, game, assigned date); and completion rate.
+  - A profile may show: Discord username (`users.discord_username`, kept current by `bot/profiles.py`); Riot ID and League ranks/W-L/streak; Deadlock rank/W-L/streak; the last 10 ranked games per game (`task` always null); odds as whole percentages per meter of their pity mode; and pending tasks (description, tier, game, assigned date).
   - A profile must never show the Steam/Deadlock account ID or persona name, raw pity, task IDs, task templates, or completed-task history. This is enforced by the separate `Player*Out` schemas: add a field there only if it fits these rules, and extend `tests/api/test_players.py`.
 - **Ownership.** `processed_matches` has the primary key `(game, match_id, discord_id)`, so League and Deadlock IDs can never collide. `tasks.game` records which game triggered a task, and `pity_history.meter` records which meter a point belongs to.
 
@@ -194,6 +198,12 @@ SSH details are in the user's memory, not in this repo. The repo lives at `~/lol
 - The bot uses only default (non-privileged) intents, because there are no prefix commands or message reading.
 
 **Frontend.**
-- The palette is "Charcoal & Dusty Blue": Tailwind v4 `@theme` tokens in `web/src/index.css` (`--color-hero` #18181b, `--color-accent` #5b7fa6, `--color-page` #fafaf9, warm `--color-tier-{low,medium,high}*`). Use the tokens, not raw hex. In match feeds a win is dusty blue and a loss is charcoal.
+- **Theming.** Every color is a CSS variable in `web/src/index.css`, switched by `data-theme` (`dark` default, `light`) and `data-accent` (`violet` default, `lime`, `teal`, `amber`) on `<html>`. Tailwind's default palette is cleared, so only token utilities exist: `bg-bg`, `bg-surface`, `bg-raised`, `border-line`, `text-fg`, `text-muted`, `bg-track`, `text-loss`, `bg-accent`/`text-accent`, `text-accent-strong`, `bg-accent-soft` (accent at 14%), `bg-accent-mid` (35%), `text-on-accent`. Recharts uses the same variables (`stroke="var(--accent)"`). Never hard-code hex in components.
+  - Dark uses each accent as-is; light uses its deeper "ink" shade. `--accent-strong` (ink mixed 80% with black in light) is for accent text on `accent-soft` or `raised`, where plain ink fails 4.5:1 for lime/amber/teal. All text pairs were checked at 4.5:1 in both themes.
+  - Tier tags: Low = soft + accent-strong text, Medium = mid + regular text, High = solid accent + on-accent. Wins use the accent, losses `text-loss`.
+  - Any element with `data-accent` resolves that accent's tokens (the accent swatches rely on this).
+- **Layout.** No cards and no max-width container: full width with 48px side padding (`px-4 sm:px-8 lg:px-12`). Sections are separated by headings, whitespace and 1px `border-line` hairlines. Data goes in `DataTable` (hairline rows, muted 12px headers, horizontal scroll on small screens). Touch targets are at least 44px (`min-h-11`).
+- **Appearance persistence.** `users.theme` / `users.accent` (dashboard-only; the bot never reads them), returned by `GET /me` and changed by `PATCH /me/appearance` (validated; 400 without a users row, like the other settings). The choice is also cached in `localStorage["appearance"]`, which the inline script in `web/index.html` applies before first paint, so there is no flash of the wrong theme. Keep the allowed values in sync across `api/schemas.py`, `lib/appearance.ts` and that script.
+- **Removed on purpose** (don't bring back without asking): task completion rate (dashboard, profiles, `/players`, and its API fields), the per-tier breakdown, and the tasks-completed-over-time chart (`/stats/overview`'s `activity`). The bot's `/stats` command is separate and unchanged.
 - The frontend always calls relative `/api/...` paths, which keeps the session cookie same-origin in both dev and prod.
 - Discord IDs exceed JavaScript's 2^53 safe-integer limit, so `JSON.parse` silently rounds them. Any ID the browser sends back to the API must be serialized as a string, as `Player*Out.discord_id` is. `MeOut.discord_id` is still a number and is display-only.

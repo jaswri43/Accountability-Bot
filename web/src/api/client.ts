@@ -1,3 +1,4 @@
+import type { Appearance } from "../lib/appearance";
 import type {
   DeadlockMatch,
   DeadlockOverview,
@@ -58,6 +59,8 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 export const api = {
   me: () => apiFetch<Me>("/me"),
+  setAppearance: (patch: Partial<Appearance>) =>
+    apiFetch<Appearance>("/me/appearance", { method: "PATCH", body: JSON.stringify(patch) }),
   status: () => apiFetch<StatusResponse>("/status"),
   tasks: (status: "pending" | "all" = "pending") =>
     apiFetch<Task[]>(`/tasks?status=${status}`),

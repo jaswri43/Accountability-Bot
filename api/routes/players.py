@@ -11,20 +11,17 @@ copied across. GET only -- there is no write path to another user here.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 
 from auth import CurrentUser, get_current_user
 from bot_bridge import (
     GAME_DEADLOCK,
     GAME_LEAGUE,
-    Task,
     User,
     async_session,
     format_badge,
     get_visible_user,
     has_opted_into_severity,
     pending_tasks,
-    task_completion_rate,
     visible_users,
 )
 from schemas import (
@@ -53,11 +50,6 @@ def _games(user: User) -> list[str]:
     return [g for g, linked in ((GAME_LEAGUE, user.riot_puuid), (GAME_DEADLOCK, user.deadlock_account_id)) if linked]
 
 
-async def _completion_rate(session, discord_id: int) -> float:
-    result = await session.execute(select(Task).where(Task.discord_id == discord_id))
-    return task_completion_rate(result.scalars().all())
-
-
 @router.get("/players", response_model=list[PlayerSummaryOut])
 async def list_players(user: CurrentUser = Depends(get_current_user)):
     async with async_session() as session:
@@ -78,7 +70,6 @@ async def list_players(user: CurrentUser = Depends(get_current_user)):
                     league_rank=league_rank,
                     deadlock_rank=format_badge(player.deadlock_badge) if player.deadlock_account_id else None,
                     pending_count=len(await pending_tasks(session, player.discord_id)),
-                    task_completion_rate=await _completion_rate(session, player.discord_id),
                 )
             )
         return summaries
@@ -133,5 +124,4 @@ async def get_player(discord_id: int, user: CurrentUser = Depends(get_current_us
                 PlayerTaskOut(description=t.task_description, tier=t.tier, game=t.game, assigned_at=t.created_at)
                 for t in await pending_tasks(session, discord_id)
             ],
-            task_completion_rate=await _completion_rate(session, discord_id),
         )

@@ -3,7 +3,11 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Dashboard appearance choices (users.theme / users.accent).
+Theme = Literal["dark", "light"]
+Accent = Literal["violet", "lime", "teal", "amber"]
 
 
 class TaskOut(BaseModel):
@@ -19,6 +23,8 @@ class TaskOut(BaseModel):
     completed_at: datetime | None
     # Which game's loss triggered it: "league" or "deadlock".
     game: str
+    # Severity tier drawn for it: "low", "medium" or "high".
+    tier: str | None
 
     model_config = {"from_attributes": True}
 
@@ -80,6 +86,29 @@ class MeOut(BaseModel):
     pity_mode: Literal["shared", "separate"]
     # Hidden from other players' Players tab (see routes/players.py).
     profile_hidden: bool
+    # Dashboard appearance; the defaults until a game is linked (no users row).
+    theme: Theme
+    accent: Accent
+
+
+class AppearanceUpdate(BaseModel):
+    """PATCH /me/appearance: either or both; unknown keys or values are a 422."""
+
+    theme: Theme | None = None
+    accent: Accent | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _not_empty(self):
+        if self.theme is None and self.accent is None:
+            raise ValueError("Set theme, accent, or both.")
+        return self
+
+
+class AppearanceOut(BaseModel):
+    theme: Theme
+    accent: Accent
 
 
 class RankQueueOut(BaseModel):
@@ -104,17 +133,6 @@ class StreakOut(BaseModel):
     count: int
 
 
-class TierStatOut(BaseModel):
-    count: int
-    completed: int
-    completion_rate: float
-
-
-class ActivityPointOut(BaseModel):
-    date: str
-    count: int
-
-
 class StatsOverviewOut(BaseModel):
     solo_rank: RankQueueOut | None
     flex_rank: RankQueueOut | None
@@ -122,9 +140,6 @@ class StatsOverviewOut(BaseModel):
     win_loss_solo: WinLossOut
     win_loss_flex: WinLossOut
     streak: StreakOut
-    task_completion_rate: float
-    tier_breakdown: dict[str, TierStatOut]
-    activity: list[ActivityPointOut]
 
 
 class MatchTaskOut(BaseModel):
@@ -225,7 +240,6 @@ class PlayerSummaryOut(BaseModel):
     league_rank: str | None
     deadlock_rank: str | None
     pending_count: int
-    task_completion_rate: float
 
 
 class PlayerOddsOut(BaseModel):
@@ -276,4 +290,3 @@ class PlayerProfileOut(BaseModel):
     pity_mode: Literal["shared", "separate"]
     odds: list[PlayerOddsOut]
     pending_tasks: list[PlayerTaskOut]
-    task_completion_rate: float

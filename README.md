@@ -11,6 +11,37 @@ Done** button on the task message.
 **Live**, running unattended on an Oracle Cloud VM under systemd (see
 Deployment below).
 
+Phase 18: dashboard redesign + per-user Appearance setting.
+
+- **Look**: dark by default, Inter, no cards. Content spans the full window
+  (48px side padding); sections are separated by headings, whitespace and
+  1px hairlines, and data sits in tables. Colors are CSS variables switched
+  by `data-theme` / `data-accent` on `<html>` (`web/src/index.css`), shared
+  by Tailwind utilities and Recharts, so switching needs no component logic.
+  Four accents (violet, lime, teal, amber), each with a deeper "ink" shade
+  for light mode; all text pairs meet 4.5:1 in both themes.
+- **Structure**: a header with text tabs (Overview, League, Deadlock,
+  Players, Tasks, History) replaces the old Dashboard pill tabs; League and
+  Deadlock are their own routes now (`/?tab=` links redirect). Overview is a
+  number strip (pending, League rank, Deadlock rank), a segmented "next loss
+  odds" bar (two rows in separate pity mode, never the raw pity), then
+  pending tasks and recent matches from both games side by side, then
+  Settings (pity mode, profile visibility). Player profiles reuse the
+  Overview layout, read-only. Players is a table now.
+- **Removed**: task completion rate (dashboard, profiles, and the
+  `task_completion_rate` fields on `/stats/overview`, `/players` and
+  `/players/{id}`), the per-tier breakdown, and the tasks-completed-over-time
+  chart (`/stats/overview`'s `activity`). The matching helpers in
+  `bot/stats.py` went with them; the bot's own `/stats` command never used
+  them and is unchanged.
+- **Appearance**: `users.theme` (`dark`/`light`) and `users.accent`, added by
+  `init_db()` with dark/violet defaults for existing rows. `GET /me` returns
+  both; `PATCH /me/appearance` validates and saves them. The username menu in
+  the header switches them instantly; the choice is cached in localStorage
+  and applied by an inline script in `web/index.html` before first paint.
+  Users with no game linked (no users row) keep it in the browser only.
+- `TaskOut` gained `tier`, for the Tier column on Overview and History.
+
 Phase 17: read-only player profiles.
 
 - **Players tab** (`web/src/pages/Players.tsx`, `PlayerProfile.tsx`): cards for

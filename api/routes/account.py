@@ -1,5 +1,5 @@
-"""The caller's account and settings (pity mode, profile visibility), pity
-status and pity history."""
+"""The caller's account and settings (pity mode, profile visibility,
+dashboard appearance), pity status and pity history."""
 
 from typing import Literal
 
@@ -20,6 +20,8 @@ from bot_bridge import (
     set_profile_hidden,
 )
 from schemas import (
+    AppearanceOut,
+    AppearanceUpdate,
     MeOut,
     PityHistoryPointOut,
     PityMeterOut,
@@ -96,7 +98,25 @@ async def get_me(user: CurrentUser = Depends(get_current_user)):
         deadlock_persona_name=db_user.deadlock_persona_name if db_user else None,
         pity_mode=db_user.pity_mode if db_user else "shared",
         profile_hidden=db_user.profile_hidden if db_user else False,
+        theme=db_user.theme if db_user else "dark",
+        accent=db_user.accent if db_user else "violet",
     )
+
+
+@router.patch("/me/appearance", response_model=AppearanceOut)
+async def update_appearance(body: AppearanceUpdate, user: CurrentUser = Depends(get_current_user)):
+    """Dashboard-only setting; the bot never reads it. Like the other
+    settings it needs a users row, which only /register* creates."""
+    async with async_session() as session:
+        db_user = await session.get(User, user.discord_id)
+        if db_user is None:
+            raise HTTPException(400, "Register with /register or /register-deadlock in Discord first.")
+        if body.theme is not None:
+            db_user.theme = body.theme
+        if body.accent is not None:
+            db_user.accent = body.accent
+        await session.commit()
+        return AppearanceOut(theme=db_user.theme, accent=db_user.accent)
 
 
 @router.put("/profile-visibility", response_model=ProfileVisibilityOut)

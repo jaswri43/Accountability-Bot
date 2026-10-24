@@ -83,6 +83,10 @@ class User(Base):
     # /register*, /hideprofile, and a refresh on every bot start). Null
     # until first seen.
     discord_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Dashboard appearance (PATCH /me/appearance); the bot never reads these.
+    # "dark"/"light" and "violet"/"lime"/"teal"/"amber" -- the API validates.
+    theme: Mapped[str] = mapped_column(String, default="dark", server_default="dark")
+    accent: Mapped[str] = mapped_column(String, default="violet", server_default="violet")
 
 
 class ProcessedMatch(Base):
@@ -244,6 +248,8 @@ async def init_db() -> None:
         await _add_column_if_missing(conn, "processed_matches", "backfilled", "BOOLEAN DEFAULT 0")
         await _add_column_if_missing(conn, "users", "profile_hidden", "BOOLEAN DEFAULT 0")
         await _add_column_if_missing(conn, "users", "discord_username", "VARCHAR")
+        await _add_column_if_missing(conn, "users", "theme", "VARCHAR DEFAULT 'dark'")
+        await _add_column_if_missing(conn, "users", "accent", "VARCHAR DEFAULT 'violet'")
 
     # Its own transaction, after the block above has committed: the
     # pre-rebuild VACUUM INTO backup can't run inside an open transaction.

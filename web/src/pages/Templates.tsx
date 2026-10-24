@@ -1,8 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError } from "../api/client";
 import type { TaskTemplate, Tier } from "../api/types";
-import { TierBadge } from "../components/TierBadge";
+import { DataTable, ErrorBanner, PageHeader, TableMessage, Td, Th, TierTag } from "../components/ui";
+import { TIER_LABEL } from "../lib/game";
 
+const FORM_ID = "add-task-template";
+const TIERS: Tier[] = ["low", "medium", "high"];
+
+const FIELD =
+  "min-h-10 rounded-md border border-line bg-surface px-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent";
+
+/** Your task templates (same list as /mytasks), plus an add row at the bottom. */
 export function Templates() {
   const [templates, setTemplates] = useState<TaskTemplate[] | null>(null);
   const [description, setDescription] = useState("");
@@ -21,6 +29,10 @@ export function Templates() {
   }
 
   useEffect(load, []);
+
+  // Active templates first (in the server's tier order, so numbers run
+  // 1..N), then removed ones, which have no number.
+  const rows = templates ? [...templates.filter((t) => t.active), ...templates.filter((t) => !t.active)] : null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,91 +73,109 @@ export function Templates() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-normal tracking-tight text-zinc-900">Task Templates</h1>
+      <PageHeader
+        title="Tasks"
+        subtitle="Each counted loss draws one of these. Tagging any task Medium or High turns on severity odds."
+      />
 
-      {error && (
-        <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-600/20">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-col gap-3 rounded-3xl border border-hairline bg-white p-5 sm:flex-row sm:items-end"
-      >
-        <div className="flex-1">
-          <label htmlFor="description" className="block text-sm text-zinc-600">
-            New task
-          </label>
-          <input
-            id="description"
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Do 20 pushups"
-            maxLength={500}
-            className="mt-1 w-full rounded-xl border border-hairline px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-        </div>
-        <div>
-          <label htmlFor="tier" className="block text-sm text-zinc-600">
-            Tier
-          </label>
-          <select
-            id="tier"
-            value={tier}
-            onChange={(e) => setTier(e.target.value as Tier)}
-            className="mt-1 rounded-xl border border-hairline px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-        <button
-          type="submit"
-          disabled={submitting || !description.trim()}
-          className="rounded-full bg-hero px-4 py-2 text-sm text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {submitting ? "Adding…" : "Add task"}
-        </button>
-      </form>
+      {/* The inputs live in the table's last row; form= ties them to this form. */}
+      <form id={FORM_ID} onSubmit={handleSubmit} />
 
-      <div className="rounded-3xl border border-hairline bg-white">
-        {templates === null ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">Loading…</p>
-        ) : templates.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-500">
-            No tasks yet — add one above. Losses fall back to a generic default until you do.
-          </p>
-        ) : (
-          <ul className="divide-y divide-hairline">
-            {templates.map((template) => (
-              <li key={template.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <span className="w-6 shrink-0 text-sm text-zinc-500">{template.number ?? "—"}</span>
-                  <span className={`text-sm ${template.active ? "text-zinc-900" : "text-zinc-400 line-through"}`}>
-                    {template.description}
-                  </span>
-                  <TierBadge tier={template.tier} />
-                </div>
-                {template.active ? (
-                  <button
-                    type="button"
-                    disabled={deletingId === template.id}
-                    onClick={() => handleDelete(template.id)}
-                    className="shrink-0 rounded-full border border-hairline px-3.5 py-1.5 text-sm text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deletingId === template.id ? "Removing…" : "Remove"}
-                  </button>
-                ) : (
-                  <span className="shrink-0 text-xs text-zinc-500">Removed</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <DataTable minWidth="36rem">
+        <thead>
+          <tr>
+            <Th className="w-10">#</Th>
+            <Th>Description</Th>
+            <Th className="w-36">Tier</Th>
+            <Th className="w-28">
+              <span className="sr-only">Action</span>
+            </Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows === null ? (
+            <TableMessage colSpan={4}>Loading…</TableMessage>
+          ) : rows.length === 0 ? (
+            <TableMessage colSpan={4}>
+              No tasks yet. Add one below; losses fall back to a generic default until you do.
+            </TableMessage>
+          ) : (
+            rows.map((template) => (
+              <tr key={template.id}>
+                <Td className="text-muted tabular-nums">{template.number ?? "—"}</Td>
+                <Td className={template.active ? "" : "text-muted line-through"}>{template.description}</Td>
+                <Td>
+                  <TierTag tier={template.tier} />
+                </Td>
+                <Td align="right">
+                  {template.active ? (
+                    <button
+                      type="button"
+                      disabled={deletingId === template.id}
+                      onClick={() => handleDelete(template.id)}
+                      className="-mx-2 -my-3 inline-flex min-h-11 items-center px-2 text-sm text-muted hover:text-loss disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deletingId === template.id ? "Removing…" : "Delete"}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-muted">Removed</span>
+                  )}
+                </Td>
+              </tr>
+            ))
+          )}
+        </tbody>
+        <tfoot>
+          <tr>
+            <Td />
+            <Td>
+              <label htmlFor="description" className="sr-only">
+                New task
+              </label>
+              <input
+                id="description"
+                form={FORM_ID}
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="New task, e.g. 30 push-ups"
+                maxLength={500}
+                className={`${FIELD} w-full`}
+              />
+            </Td>
+            <Td>
+              <label htmlFor="tier" className="sr-only">
+                Tier
+              </label>
+              <select
+                id="tier"
+                form={FORM_ID}
+                value={tier}
+                onChange={(e) => setTier(e.target.value as Tier)}
+                className={`${FIELD} w-full`}
+              >
+                {TIERS.map((t) => (
+                  <option key={t} value={t}>
+                    {TIER_LABEL[t]}
+                  </option>
+                ))}
+              </select>
+            </Td>
+            <Td align="right">
+              <button
+                type="submit"
+                form={FORM_ID}
+                disabled={submitting || !description.trim()}
+                className="min-h-10 rounded-md bg-accent px-4 text-sm font-medium text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? "Adding…" : "Add"}
+              </button>
+            </Td>
+          </tr>
+        </tfoot>
+      </DataTable>
     </div>
   );
 }

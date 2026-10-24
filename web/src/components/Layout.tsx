@@ -1,56 +1,47 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { api } from "../api/client";
-import { useAuth } from "../context/AuthContext";
+import { Link, NavLink, Outlet } from "react-router-dom";
+import { UserMenu } from "./UserMenu";
+
+const NAV: { to: string; label: string; end?: boolean }[] = [
+  { to: "/", label: "Overview", end: true },
+  { to: "/league", label: "League" },
+  { to: "/deadlock", label: "Deadlock" },
+  { to: "/players", label: "Players" },
+  { to: "/templates", label: "Tasks" },
+  { to: "/history", label: "History" },
+];
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-  `rounded-full px-3.5 py-1.5 text-sm transition-colors ${
-    isActive ? "bg-hero text-white" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+  `flex h-12 shrink-0 items-center border-b-2 px-3 text-sm transition-colors md:h-16 ${
+    isActive ? "border-accent font-medium text-fg" : "border-transparent text-muted hover:text-fg"
   }`;
 
+/** Full-width page shell: header bar with text tabs, then the page with
+ * ~48px side padding (less on small screens) and no max-width container. */
 export function Layout() {
-  const { user, refresh } = useAuth();
-
-  async function handleLogout() {
-    await api.logout().catch(() => {});
-    refresh();
-  }
-
   return (
-    <div className="min-h-screen bg-page">
-      <header className="border-b border-hairline bg-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <span className="text-lg font-normal tracking-tight text-zinc-900">
-              LoL Accountability
-            </span>
-            <nav className="flex flex-wrap gap-1">
-              <NavLink to="/" end className={navLinkClass}>
-                Dashboard
+    <div className="min-h-screen bg-bg text-fg">
+      <header className="border-b border-line bg-surface">
+        <div className="flex flex-wrap items-center gap-x-6 px-4 sm:px-8 lg:px-12">
+          <Link to="/" className="flex h-14 items-center gap-2.5 md:h-16">
+            <span className="h-6 w-6 rounded-md bg-accent" aria-hidden="true" />
+            <span className="font-semibold tracking-tight">Accountability</span>
+          </Link>
+          <nav
+            aria-label="Main"
+            className="order-last -mx-4 flex w-[calc(100%+2rem)] overflow-x-auto px-1 sm:-mx-8 sm:w-[calc(100%+4rem)] sm:px-5 md:order-0 md:mx-0 md:w-auto md:px-0"
+          >
+            {NAV.map((item) => (
+              <NavLink key={item.to} to={item.to} end={item.end} className={navLinkClass}>
+                {item.label}
               </NavLink>
-              <NavLink to="/history" className={navLinkClass}>
-                History
-              </NavLink>
-              <NavLink to="/templates" className={navLinkClass}>
-                Tasks
-              </NavLink>
-              <NavLink to="/players" className={navLinkClass}>
-                Players
-              </NavLink>
-            </nav>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-zinc-500 sm:inline">{user?.discord_username}</span>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded-full border border-hairline px-3.5 py-1.5 text-sm text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-900"
-            >
-              Log out
-            </button>
+            ))}
+          </nav>
+          <div className="ml-auto">
+            <UserMenu />
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <main className="px-4 py-8 sm:px-8 lg:px-12 lg:py-10">
         <Outlet />
       </main>
     </div>

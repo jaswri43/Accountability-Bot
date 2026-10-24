@@ -1,35 +1,101 @@
 @import "tailwindcss";
 
-/* "Charcoal & Dusty Blue" -- see README's Phase 13 notes. Tailwind v4
-   auto-generates the full set of color utilities (bg, text, border, ring,
-   etc.) for every --color- token here, so e.g. --color-hero gives bg-hero,
-   text-hero, and so on. */
-@theme {
-  --color-page: #fafaf9;
-  --color-hairline: #e5e5e5;
-  --color-hero: #18181b;
-  --color-accent: #5b7fa6;
-  --color-accent-soft: #eaf0f5;
-  /* text-accent reads fine at large/bold sizes (big numbers, chart fills)
-     but is too light for small badge text on accent-soft -- use this
-     darker, more saturated variant there instead. */
-  --color-accent-strong: #2f5878;
+/* Design tokens. Every color is a CSS custom property switched by
+   data-theme / data-accent on <html> (set before first paint by index.html,
+   then by src/lib/appearance.ts), so changing theme or accent needs no
+   component logic. Tailwind utilities below and Recharts (stroke="var(--accent)")
+   both read these same variables.
 
-  /* Tier severity ramp: one hue (warm sand -> rust), tint/shade only --
-     deliberately not three unrelated colors, so it reads as "increasing
-     intensity" rather than a stoplight. */
-  --color-tier-low: #c9a876;
-  --color-tier-low-soft: #f6eee3;
-  --color-tier-low-text: #8a6b42;
-  --color-tier-medium: #a97845;
-  --color-tier-medium-soft: #efdec7;
-  --color-tier-medium-text: #7a5424;
-  --color-tier-high: #7a4f26;
-  --color-tier-high-soft: #e1c7a3;
-  --color-tier-high-text: #5c3d1a;
+   Contrast (WCAG 4.5:1) is checked for every text/background pair both
+   themes and all four accents produce. Light-mode accent "ink" text fails
+   on its own 14% tint for lime/teal/amber, hence --accent-strong: use it
+   for accent-colored text on accent-soft or raised backgrounds. */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f0f11;
+  --surface: #141416;
+  --raised: #1e1e22;
+  --border: #26262b;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --track: #2a2a30;
+  --loss: #f87171;
+  --on-accent: #0f0f11;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --raised: #f1f1ef;
+  --border: #e4e4e0;
+  --text: #18181b;
+  --muted: #5b5b63;
+  --track: #e4e4e0;
+  --loss: #b91c1c;
+  --on-accent: #ffffff;
+}
+
+/* Each accent: the dark-theme color and the deeper light-theme "ink". */
+:root,
+[data-accent="violet"] {
+  --accent-base: #a78bfa;
+  --accent-ink: #6d28d9;
+}
+[data-accent="lime"] {
+  --accent-base: #c6f36b;
+  --accent-ink: #4d7c0f;
+}
+[data-accent="teal"] {
+  --accent-base: #5ee6c9;
+  --accent-ink: #0f766e;
+}
+[data-accent="amber"] {
+  --accent-base: #f5b94a;
+  --accent-ink: #b45309;
+}
+
+/* Resolved on every element carrying data-accent (not just <html>), so an
+   accent swatch can preview its own color via data-accent + bg-accent. */
+:root,
+[data-accent] {
+  --accent: var(--accent-base);
+  --accent-strong: var(--accent-base);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-mid: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+[data-theme="light"][data-accent],
+[data-theme="light"] [data-accent] {
+  --accent: var(--accent-ink);
+  --accent-strong: color-mix(in srgb, var(--accent-ink) 80%, #000);
+}
+
+/* Tailwind's default palette is cleared so only these tokens exist as
+   color utilities: bg-bg, bg-surface, text-fg, text-muted, border-line,
+   bg-accent-soft, text-on-accent, and so on. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-track: var(--track);
+  --color-loss: var(--loss);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-mid: var(--accent-mid);
+  --color-on-accent: var(--on-accent);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 body {
-  background-color: var(--color-page);
-  @apply font-light text-zinc-800 antialiased;
+  background-color: var(--bg);
+  color: var(--text);
+  @apply font-sans antialiased;
 }

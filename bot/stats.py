@@ -6,11 +6,7 @@ is a distinct concern, summarizing history for display rather than driving
 any behavior.
 """
 
-from collections import defaultdict
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
-
-TIERS = ("low", "medium", "high")
 
 
 def match_chronological_key(match_id: str) -> int:
@@ -63,49 +59,3 @@ def win_loss_record(matches: Sequence) -> dict:
     losses = sum(1 for m in matches if m.was_loss)
     total = wins + losses
     return {"wins": wins, "losses": losses, "win_rate": wins / total if total else 0.0}
-
-
-def task_completion_rate(tasks: Sequence) -> float:
-    """Fraction of the given tasks with status == 'done'. 0.0 if empty --
-    there's no 'expired' status in this app, only pending/done."""
-    if not tasks:
-        return 0.0
-    done = sum(1 for t in tasks if t.status == "done")
-    return done / len(tasks)
-
-
-def tier_breakdown(tasks: Sequence) -> dict[str, dict]:
-    """{'low'/'medium'/'high': {'count', 'completed', 'completion_rate'}}
-    for the given tasks, keyed by Task.tier (never None post-migration, see
-    db.py's backfill, but treated as 'low' defensively anyway)."""
-    by_tier: dict[str, list] = {tier: [] for tier in TIERS}
-    for task in tasks:
-        by_tier.setdefault(task.tier or "low", []).append(task)
-
-    return {
-        tier: {
-            "count": len(tier_tasks),
-            "completed": sum(1 for t in tier_tasks if t.status == "done"),
-            "completion_rate": task_completion_rate(tier_tasks),
-        }
-        for tier, tier_tasks in by_tier.items()
-    }
-
-
-def tasks_completed_by_day(tasks: Sequence, days: int = 14) -> list[dict]:
-    """[{'date': 'YYYY-MM-DD', 'count': n}, ...] for the last `days` days
-    (oldest first, one entry per day even if 0), counting each task on the
-    UTC calendar day it was completed. Only considers tasks with a
-    completed_at set."""
-    today = datetime.now(timezone.utc).date()
-    counts: dict = defaultdict(int)
-    for task in tasks:
-        if task.completed_at is None:
-            continue
-        counts[task.completed_at.date()] += 1
-
-    start = today - timedelta(days=days - 1)
-    return [
-        {"date": (start + timedelta(days=i)).isoformat(), "count": counts.get(start + timedelta(days=i), 0)}
-        for i in range(days)
-    ]
